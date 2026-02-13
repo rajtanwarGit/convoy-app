@@ -22,8 +22,8 @@ jobs:
       - name: Setup Java
         uses: actions/setup-java@v4
         with:
-          distribution: 'temurin'
-          java-version: '17'
+          distribution: 'zulu' # Switch back to Zulu which is often more stable for Android
+          java-version: '17'   # Force Java 17 (Standard for Android Gradle Plugin)
 
       - name: Install Dependencies
         run: npm install
