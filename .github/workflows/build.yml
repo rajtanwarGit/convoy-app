@@ -17,12 +17,12 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22 # Updated to 22 per Capacitor requirements
 
       - name: Setup Java
         uses: actions/setup-java@v4
         with:
-          distribution: 'zulu'
+          distribution: 'temurin'
           java-version: '17'
 
       - name: Install Dependencies
@@ -37,8 +37,10 @@ jobs:
       - name: Build APK with Gradle
         working-directory: ./android
         run: |
+          # Fix Windows line endings
+          sed -i 's/\r$//' gradlew
           chmod +x gradlew
-          ./gradlew assembleDebug
+          ./gradlew assembleDebug --stacktrace
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
