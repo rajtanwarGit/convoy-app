@@ -13,7 +13,7 @@ import {
 import { getAuth, signInAnonymously } from "firebase/auth";
 
 /**
- * CONVOY WEB APP - CLOUD EDITION (V4.4 - Swipe Unlock)
+ * CONVOY WEB APP - CLOUD EDITION (V4.5 - Accuracy Filter)
  * * Features:
  * 1. Real-time Cloud Sync.
  * 2. Realistic Simulation.
@@ -21,6 +21,7 @@ import { getAuth, signInAnonymously } from "firebase/auth";
  * 4. Room Validation & Auto-Cleanup.
  * 5. Smart GPS Throttling.
  * 6. Slide-to-Unlock UI.
+ * 7. GPS Accuracy Filter (Prevents zigzag trails).
  */
 
 // --- CONFIGURATION ---
@@ -83,8 +84,6 @@ const SwipeToUnlock = ({ onUnlock }) => {
 
   useEffect(() => {
     if (containerRef.current) {
-      // Calculate max drag distance (Container Width - Thumb Width - Padding)
-      // w-72 (288px) - w-12 (48px) - 8px padding = ~232px
       maxDrag.current = containerRef.current.clientWidth - 56; 
     }
   }, []);
@@ -96,14 +95,14 @@ const SwipeToUnlock = ({ onUnlock }) => {
     if (dragX > maxDrag.current * 0.9) {
       onUnlock();
     } else {
-      setDragX(0); // Snap back
+      setDragX(0); 
     }
   };
 
   const handleMove = (clientX) => {
     if (!isDragging || !containerRef.current) return;
     const rect = containerRef.current.getBoundingClientRect();
-    const x = clientX - rect.left - 28; // 28 is approx center of thumb (4px padding + 24px half-width)
+    const x = clientX - rect.left - 28; 
     const clamped = Math.min(Math.max(0, x), maxDrag.current);
     setDragX(clamped);
   };
@@ -129,14 +128,11 @@ const SwipeToUnlock = ({ onUnlock }) => {
 
   return (
     <div ref={containerRef} className="relative w-72 h-14 bg-zinc-900 border border-zinc-700 rounded-full shadow-2xl overflow-hidden flex items-center select-none">
-      {/* Background Text */}
       <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-0 opacity-50">
         <div className="text-zinc-400 text-xs font-bold tracking-[0.2em] uppercase animate-pulse flex items-center gap-2">
            Slide to Unlock <ChevronRight size={14} />
         </div>
       </div>
-      
-      {/* Draggable Thumb */}
       <div 
         className="absolute left-1 w-12 h-12 bg-white rounded-full shadow-lg flex items-center justify-center z-10 cursor-grab active:cursor-grabbing"
         style={{ transform: `translateX(${dragX}px)`, transition: isDragging ? 'none' : 'transform 0.3s cubic-bezier(0.18, 0.89, 0.32, 1.28)' }}
@@ -359,6 +355,7 @@ export default function App() {
     if (!userName) return alert("Name required!");
     if (!db) return alert("Firebase not configured!");
     
+    // Reset path tracker
     if (host) lastPathPointRef.current = null;
     lastUploadRef.current = 0;
     lastUploadedPosRef.current = null;
@@ -490,7 +487,7 @@ export default function App() {
     } else {
       watchId = navigator.geolocation.watchPosition(
         (pos) => {
-          const { latitude, longitude, speed } = pos.coords;
+          const { latitude, longitude, speed, accuracy } = pos.coords;
           setMyPos({ lat: latitude, lng: longitude });
           const now = Date.now();
           const timeDiff = now - lastUploadRef.current;
@@ -515,7 +512,9 @@ export default function App() {
               if (isHost) {
                  const lastPathPoint = lastPathPointRef.current;
                  const distFromPath = lastPathPoint ? getDistanceKm(lastPathPoint.lat, lastPathPoint.lng, latitude, longitude) : 100;
-                 if (distFromPath > 0.03) { 
+                 
+                 // FILTER: Only add to trail if accuracy is good (< 20m) AND moved enough (> 30m)
+                 if (distFromPath > 0.03 && accuracy < 20) { 
                      payload.path = arrayUnion({ lat: latitude, lng: longitude });
                      lastPathPointRef.current = { lat: latitude, lng: longitude };
                  }
@@ -563,7 +562,7 @@ export default function App() {
           <div className="max-w-md mx-auto w-full space-y-6">
             <div className="text-center">
               <h1 className="text-4xl font-black tracking-tight">CONVOY</h1>
-              <p className="text-blue-500 font-bold tracking-widest text-xs uppercase mt-1">Cloud Edition V4.4</p>
+              <p className="text-blue-500 font-bold tracking-widest text-xs uppercase mt-1">Cloud Edition V4.5</p>
             </div>
             <div className="bg-zinc-900 border border-zinc-800 p-6 rounded-2xl space-y-6">
               <div className="space-y-2">
