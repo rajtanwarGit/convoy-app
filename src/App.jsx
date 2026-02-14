@@ -13,7 +13,7 @@ import {
 import { getAuth, signInAnonymously } from "firebase/auth";
 
 /**
- * CONVOY WEB APP - CLOUD EDITION (V5.3 - UI Optimization)
+ * CONVOY WEB APP - CLOUD EDITION (V5.1 - Fix Map Tap)
  * * Features:
  * 1. Real-time Cloud Sync.
  * 2. Realistic Simulation.
@@ -23,7 +23,7 @@ import { getAuth, signInAnonymously } from "firebase/auth";
  * 6. Slide-to-Unlock UI.
  * 7. GPS Accuracy Filter.
  * 8. Ghost Mode.
- * 9. Smooth Sun/Light Mode Toggle.
+ * 9. Sun/Light Mode Toggle.
  * 10. Leader Markers (Comments on Map).
  */
 
@@ -204,18 +204,26 @@ const GameMap = ({
     mapInstanceRef.current = map;
   }, [isLeafletLoaded]);
 
-  // 2. Handle Theme Change (Smooth URL Swap)
+  // 2. Handle Theme Change (Tile Swap)
   useEffect(() => {
-    if (!mapInstanceRef.current || !layersRef.current.tileLayer || !window.L) return;
-    
+    if (!mapInstanceRef.current || !window.L) return;
+    const map = mapInstanceRef.current;
+
+    // Remove old layer
+    if (layersRef.current.tileLayer) {
+        layersRef.current.tileLayer.remove();
+    }
+
+    // Add new layer based on theme
     const tileUrl = theme === 'light' 
         ? 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png'
         : 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png';
 
-    // Using setUrl() is efficient and prevents the "disappearing map" glitch
-    layersRef.current.tileLayer.setUrl(tileUrl);
+    const newLayer = window.L.tileLayer(tileUrl, { maxZoom: 20 }).addTo(map);
+    layersRef.current.tileLayer = newLayer;
+    newLayer.bringToBack();
 
-  }, [theme]);
+  }, [theme, isLeafletLoaded]);
 
   // 3. Cursor Change for Placing Marker
   useEffect(() => {
@@ -235,7 +243,7 @@ const GameMap = ({
       layers.trailGroup.clearLayers(); 
       if (leaderPath && leaderPath.length > 1) {
         let currentSegment = [leaderPath[0]];
-        const trailColor = theme === 'light' ? '#9333ea' : '#a855f7'; 
+        const trailColor = theme === 'light' ? '#9333ea' : '#a855f7'; // Darker purple for light mode
 
         for (let i = 1; i < leaderPath.length; i++) {
           const prev = leaderPath[i-1];
@@ -325,6 +333,7 @@ const GameMap = ({
             marker.on('click', () => onCustomMarkerClick(m));
             layers.customMarkers[m.id] = marker;
         } else {
+            // Update in case text changed
             layers.customMarkers[m.id].setIcon(icon);
         }
     });
@@ -372,12 +381,12 @@ export default function App() {
   const [isLocked, setIsLocked] = useState(true); 
   const [focusTrigger, setFocusTrigger] = useState(0);
   const [isUiLocked, setIsUiLocked] = useState(false);
-  const [theme, setTheme] = useState('dark'); 
+  const [theme, setTheme] = useState('dark'); // 'dark' | 'light'
   
   // Marker State
   const [markers, setMarkers] = useState([]);
   const [isPlacingMarker, setIsPlacingMarker] = useState(false);
-  const [markerModal, setMarkerModal] = useState(null); 
+  const [markerModal, setMarkerModal] = useState(null); // { isOpen, lat, lng, id, text, mode: 'create'|'edit' }
 
   // Simulation & GPS
   const [isSimulating, setIsSimulating] = useState(false);
@@ -481,6 +490,7 @@ export default function App() {
       if (isHost || remainingSnapshot.empty) {
         const batch = writeBatch(db);
         remainingSnapshot.forEach(doc => batch.delete(doc.ref));
+        // Also delete markers
         const markersSnapshot = await getDocs(collection(db, `sessions/${sessionCode}/markers`));
         markersSnapshot.forEach(doc => batch.delete(doc.ref));
         
@@ -568,6 +578,7 @@ export default function App() {
           }
           updateDoc(doc(db, `sessions/${sessionCode}/users/${userId}`), payload).catch(() => {});
           
+          // Bots
           const lag1 = Math.max(0, nextIndex - 15);
           const pos1 = simRoute[lag1];
           if (pos1 && nextIndex > 15) {
@@ -645,7 +656,7 @@ export default function App() {
           <div className="max-w-md mx-auto w-full space-y-6">
             <div className="text-center">
               <h1 className="text-4xl font-black tracking-tight">CONVOY</h1>
-              <p className="text-blue-500 font-bold tracking-widest text-xs uppercase mt-1">Cloud Edition V5.3</p>
+              <p className="text-blue-500 font-bold tracking-widest text-xs uppercase mt-1">Cloud Edition V5.1</p>
             </div>
             <div className={`${cardClass} border p-6 rounded-2xl space-y-6`}>
               <div className="space-y-2">
@@ -666,6 +677,7 @@ export default function App() {
               </div>
             </div>
             
+            {/* TOGGLES */}
             <div className="flex flex-col items-center gap-4">
                <button onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')} className={`flex items-center gap-2 text-xs font-bold uppercase px-4 py-2 rounded-full border ${theme === 'light' ? 'bg-white border-zinc-300' : 'bg-zinc-900 border-zinc-700'}`}>
                   {theme === 'light' ? <><Moon size={12}/> Dark Mode</> : <><Sun size={12}/> Light Mode</>}
@@ -703,6 +715,7 @@ export default function App() {
         />
       </div>
 
+      {/* --- MARKER MODAL --- */}
       {markerModal && (
          <div className="absolute inset-0 z-50 bg-black/60 backdrop-blur-sm flex flex-col items-center justify-center p-6 animate-in fade-in zoom-in duration-200">
             <div className={`w-full max-w-sm ${cardClass} p-6 rounded-2xl`}>
@@ -735,6 +748,7 @@ export default function App() {
          </div>
       )}
 
+      {/* --- TOUCH BLOCKER OVERLAY --- */}
       {isUiLocked && (
         <div className="absolute inset-0 z-50 bg-black/60 backdrop-blur-md flex flex-col items-center justify-center animate-in fade-in duration-300">
            <div className="flex flex-col items-center gap-6 p-6">
@@ -750,6 +764,7 @@ export default function App() {
         </div>
       )}
 
+      {/* --- TOP BAR --- */}
       <div className="absolute top-0 left-0 right-0 p-4 z-10 flex flex-col items-center pointer-events-none space-y-4">
         <div className="w-full flex justify-between pointer-events-auto">
           <div className={`${cardClass} backdrop-blur-md border rounded-xl p-3 shadow-xl`}>
@@ -772,8 +787,9 @@ export default function App() {
           </div>
         </div>
 
+        {/* Placing Marker Banner */}
         {isPlacingMarker && (
-            <div className="bg-blue-600 text-white px-6 py-2 rounded-full font-bold shadow-xl animate-bounce pointer-events-none text-sm">
+            <div className="bg-blue-600 text-white px-6 py-2 rounded-full font-bold shadow-xl animate-bounce pointer-events-none">
                 Tap map to place marker
             </div>
         )}
@@ -792,59 +808,57 @@ export default function App() {
         )}
       </div>
 
+      {/* --- BOTTOM BAR --- */}
       <div className="absolute bottom-0 left-0 right-0 p-4 z-10 pointer-events-none">
         <div className={`${cardClass} backdrop-blur-md border-t rounded-2xl p-4 shadow-2xl pointer-events-auto`}>
-          <div className="flex flex-row justify-between items-center gap-4">
-            <div className="min-w-0 flex-1 overflow-hidden">
-              <h3 className="font-bold truncate text-sm sm:text-base">{userName}</h3>
-              <p className={`${textSub} text-[10px] sm:text-xs truncate`}>
+          <div className="flex justify-between items-center mb-4">
+            <div>
+              <h3 className="font-bold">{userName}</h3>
+              <p className={`${textSub} text-xs`}>
                  {participants.length} Active • {isSimulating ? 'Sim' : 'GPS'}
                  {!isSimulating && <span className="text-green-500 ml-1 inline-flex items-center gap-1"><BatteryCharging size={10} /> Eco</span>}
               </p>
             </div>
-            <div className="flex flex-row gap-1.5 flex-shrink-0">
+            <div className="flex gap-2">
                 {isHost && (
                     <button 
                        onClick={() => setIsPlacingMarker(!isPlacingMarker)}
-                       className={`p-2.5 rounded-xl shadow-lg transition-colors ${isPlacingMarker ? 'bg-blue-600 text-white' : (theme === 'light' ? 'bg-zinc-100 text-zinc-600' : 'bg-zinc-800 text-zinc-400')}`}
-                       title="Place Comment"
+                       className={`p-3 rounded-xl shadow-lg transition-colors ${isPlacingMarker ? 'bg-blue-600 text-white' : (theme === 'light' ? 'bg-zinc-100 text-zinc-600' : 'bg-zinc-800 text-zinc-400')}`}
                     >
-                       {isPlacingMarker ? <X size={18} /> : <Plus size={18} />}
+                       {isPlacingMarker ? <X size={20} /> : <Plus size={20} />}
                     </button>
                 )}
 
                 <button 
-                   onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')}
-                   className={`p-2.5 rounded-xl shadow-lg transition-colors ${theme === 'light' ? 'bg-zinc-100 text-zinc-600' : 'bg-zinc-800 text-zinc-400'}`}
-                   title="Toggle Theme"
-                >
-                   {theme === 'light' ? <Moon size={18} /> : <Sun size={18} />}
-                </button>
-
-                <button 
                    onClick={() => setIsUiLocked(true)}
-                   className={`p-2.5 rounded-xl shadow-lg transition-colors ${theme === 'light' ? 'bg-zinc-100 text-zinc-600' : 'bg-zinc-800 text-zinc-400'}`}
-                   title="Lock Screen"
+                   className={`p-3 rounded-xl shadow-lg transition-colors ${theme === 'light' ? 'bg-zinc-100 text-zinc-600' : 'bg-zinc-800 text-zinc-400'}`}
                 >
-                   <Shield size={18} />
+                   <Shield size={20} />
                 </button>
 
-                <button onClick={() => { setIsLocked(!isLocked); setSelectedUser(null); }} className={`p-2.5 rounded-xl shadow-lg transition-colors ${isLocked ? 'bg-blue-600 text-white' : (theme === 'light' ? 'bg-zinc-100 text-zinc-600' : 'bg-zinc-800 text-zinc-500')}`} title="Map Lock">
-                    {isLocked ? <Lock size={18} /> : <Unlock size={18} />}
+                <button onClick={() => { setIsLocked(!isLocked); setSelectedUser(null); }} className={`p-3 rounded-xl shadow-lg transition-colors ${isLocked ? 'bg-blue-600 text-white' : (theme === 'light' ? 'bg-zinc-100 text-zinc-600' : 'bg-zinc-800 text-zinc-500')}`}>
+                    {isLocked ? <Lock size={20} /> : <Unlock size={20} />}
                 </button>
                 
                 <button onClick={() => { 
                     setIsLocked(true); 
                     setSelectedUser(null); 
                     setFocusTrigger(prev => prev + 1);
-                }} className={`p-2.5 rounded-xl shadow-lg transition-colors ${theme === 'light' ? 'bg-zinc-100 text-zinc-900' : 'bg-zinc-800 text-white'}`} title="Locate Me">
-                    <Locate size={18} />
+                }} className={`p-3 rounded-xl shadow-lg transition-colors ${theme === 'light' ? 'bg-zinc-100 text-zinc-900' : 'bg-zinc-800 text-white'}`}>
+                    <Locate size={20} />
                 </button>
             </div>
           </div>
-          
-          <div className="flex gap-2 overflow-x-auto pb-1 mt-4 scrollbar-hide">
-             {sortedParticipants.map(p => {
+          <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-hide">
+             {/* Sorted List */}
+             {useMemo(() => {
+                 if (!participants.find(p => p.isLeader)) return participants;
+                 const leader = participants.find(p => p.isLeader);
+                 const others = participants.filter(p => !p.isLeader).sort((a, b) => {
+                    return getDistanceKm(leader.lat, leader.lng, a.lat, a.lng) - getDistanceKm(leader.lat, leader.lng, b.lat, b.lng);
+                 });
+                 return [leader, ...others];
+             }, [participants]).map(p => {
                 const ghost = isGhost(p.lastActive);
                 return (
                 <div key={p.id} className={`flex-shrink-0 border rounded-lg p-2 px-3 flex items-center gap-2 active:scale-95 transition-transform ${theme === 'light' ? 'bg-white border-zinc-200' : 'bg-zinc-950 border-zinc-800'}`} onClick={() => handleMarkerClick(p)}>
