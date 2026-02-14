@@ -13,14 +13,15 @@ import {
 import { getAuth, signInAnonymously } from "firebase/auth";
 
 /**
- * CONVOY WEB APP - CLOUD EDITION (V4.2 - Touch Lock)
+ * CONVOY WEB APP - CLOUD EDITION (V4.3 - Stable Layout)
  * * Features:
  * 1. Real-time Cloud Sync.
  * 2. Realistic Simulation (Leader + Follower Bots).
  * 3. Non-blocking Distance HUD.
  * 4. Room Validation & Auto-Cleanup.
  * 5. Smart GPS Throttling.
- * 6. UI Touch Lock (Prevent accidental clicks while driving).
+ * 6. UI Touch Lock.
+ * 7. Stable Login Layout (No keyboard jumping).
  */
 
 // --- CONFIGURATION ---
@@ -484,12 +485,11 @@ export default function App() {
 
   if (step === 'login') {
     return (
-      <div className="fixed inset-0 bg-zinc-950 text-white overflow-y-auto">
-        <div className="min-h-full flex flex-col justify-center p-6">
-          <div className="max-w-md mx-auto w-full space-y-6">
+      <div className="min-h-[100dvh] bg-zinc-950 text-white flex flex-col items-center pt-20 p-6 overflow-y-auto">
+        <div className="max-w-md w-full space-y-6">
             <div className="text-center">
               <h1 className="text-4xl font-black tracking-tight">CONVOY</h1>
-              <p className="text-blue-500 font-bold tracking-widest text-xs uppercase mt-1">Cloud Edition V4.2</p>
+              <p className="text-blue-500 font-bold tracking-widest text-xs uppercase mt-1">Cloud Edition V4.3</p>
             </div>
             <div className="bg-zinc-900 border border-zinc-800 p-6 rounded-2xl space-y-6">
               <div className="space-y-2">
@@ -526,7 +526,6 @@ export default function App() {
                )}
             </div>
           </div>
-        </div>
       </div>
     );
   }
