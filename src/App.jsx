@@ -13,7 +13,7 @@ import {
 import { getAuth, signInAnonymously } from "firebase/auth";
 
 /**
- * CONVOY WEB APP - CLOUD EDITION (V5.0 - Sun Mode & Markers)
+ * CONVOY WEB APP - CLOUD EDITION (V5.1 - Fix Map Tap)
  * * Features:
  * 1. Real-time Cloud Sync.
  * 2. Realistic Simulation.
@@ -166,6 +166,15 @@ const GameMap = ({
   const mapRef = useRef(null);
   const mapInstanceRef = useRef(null);
   const layersRef = useRef({ markers: {}, customMarkers: {}, trailGroup: null, tileLayer: null }); 
+  
+  // Refs to ensure listeners always see fresh props
+  const onMapClickRef = useRef(onMapClick);
+  const onMapMoveRef = useRef(onMapMove);
+
+  useEffect(() => {
+    onMapClickRef.current = onMapClick;
+    onMapMoveRef.current = onMapMove;
+  }, [onMapClick, onMapMove]);
 
   // 1. Init Map
   useEffect(() => {
@@ -183,11 +192,11 @@ const GameMap = ({
     }).addTo(map);
 
     map.on('dragstart', () => {
-      onMapMove();
+      if (onMapMoveRef.current) onMapMoveRef.current();
     });
 
     map.on('click', (e) => {
-        onMapClick(e.latlng);
+        if (onMapClickRef.current) onMapClickRef.current(e.latlng);
     });
 
     layersRef.current.trailGroup = window.L.layerGroup().addTo(map);
@@ -647,7 +656,7 @@ export default function App() {
           <div className="max-w-md mx-auto w-full space-y-6">
             <div className="text-center">
               <h1 className="text-4xl font-black tracking-tight">CONVOY</h1>
-              <p className="text-blue-500 font-bold tracking-widest text-xs uppercase mt-1">Cloud Edition V5.0</p>
+              <p className="text-blue-500 font-bold tracking-widest text-xs uppercase mt-1">Cloud Edition V5.1</p>
             </div>
             <div className={`${cardClass} border p-6 rounded-2xl space-y-6`}>
               <div className="space-y-2">
@@ -842,7 +851,14 @@ export default function App() {
           </div>
           <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-hide">
              {/* Sorted List */}
-             {sortedParticipants.map(p => {
+             {useMemo(() => {
+                 if (!participants.find(p => p.isLeader)) return participants;
+                 const leader = participants.find(p => p.isLeader);
+                 const others = participants.filter(p => !p.isLeader).sort((a, b) => {
+                    return getDistanceKm(leader.lat, leader.lng, a.lat, a.lng) - getDistanceKm(leader.lat, leader.lng, b.lat, b.lng);
+                 });
+                 return [leader, ...others];
+             }, [participants]).map(p => {
                 const ghost = isGhost(p.lastActive);
                 return (
                 <div key={p.id} className={`flex-shrink-0 border rounded-lg p-2 px-3 flex items-center gap-2 active:scale-95 transition-transform ${theme === 'light' ? 'bg-white border-zinc-200' : 'bg-zinc-950 border-zinc-800'}`} onClick={() => handleMarkerClick(p)}>
