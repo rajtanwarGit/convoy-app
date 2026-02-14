@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { 
   Navigation, Crown, Zap, Share2, LogOut, ArrowRight, 
-  Locate, AlertTriangle, Trash2, Settings, Lock, Unlock, X, Eraser, BatteryCharging, Shield, ShieldCheck
+  Locate, AlertTriangle, Trash2, Settings, Lock, Unlock, X, Eraser, BatteryCharging, Shield, ShieldCheck, ChevronRight
 } from 'lucide-react';
 
 // --- FIREBASE IMPORTS ---
@@ -13,15 +13,14 @@ import {
 import { getAuth, signInAnonymously } from "firebase/auth";
 
 /**
- * CONVOY WEB APP - CLOUD EDITION (V4.3 - Stable Layout)
+ * CONVOY WEB APP - CLOUD EDITION (V4.4 - Swipe Unlock)
  * * Features:
  * 1. Real-time Cloud Sync.
- * 2. Realistic Simulation (Leader + Follower Bots).
+ * 2. Realistic Simulation.
  * 3. Non-blocking Distance HUD.
  * 4. Room Validation & Auto-Cleanup.
  * 5. Smart GPS Throttling.
- * 6. UI Touch Lock.
- * 7. Stable Login Layout (No keyboard jumping).
+ * 6. Slide-to-Unlock UI.
  */
 
 // --- CONFIGURATION ---
@@ -74,6 +73,81 @@ const CAR_COLORS = [
   { name: 'Orange', hex: '#f97316' },
   { name: 'Rose', hex: '#f43f5e' },
 ];
+
+// --- SWIPE TO UNLOCK COMPONENT ---
+const SwipeToUnlock = ({ onUnlock }) => {
+  const [dragX, setDragX] = useState(0);
+  const [isDragging, setIsDragging] = useState(false);
+  const containerRef = useRef(null);
+  const maxDrag = useRef(0);
+
+  useEffect(() => {
+    if (containerRef.current) {
+      // Calculate max drag distance (Container Width - Thumb Width - Padding)
+      // w-72 (288px) - w-12 (48px) - 8px padding = ~232px
+      maxDrag.current = containerRef.current.clientWidth - 56; 
+    }
+  }, []);
+
+  const handleStart = () => setIsDragging(true);
+
+  const handleEnd = () => {
+    setIsDragging(false);
+    if (dragX > maxDrag.current * 0.9) {
+      onUnlock();
+    } else {
+      setDragX(0); // Snap back
+    }
+  };
+
+  const handleMove = (clientX) => {
+    if (!isDragging || !containerRef.current) return;
+    const rect = containerRef.current.getBoundingClientRect();
+    const x = clientX - rect.left - 28; // 28 is approx center of thumb (4px padding + 24px half-width)
+    const clamped = Math.min(Math.max(0, x), maxDrag.current);
+    setDragX(clamped);
+  };
+
+  useEffect(() => {
+    const onTouchMove = (e) => handleMove(e.touches[0].clientX);
+    const onMouseMove = (e) => handleMove(e.clientX);
+    const onEnd = () => handleEnd();
+
+    if (isDragging) {
+      window.addEventListener('touchmove', onTouchMove);
+      window.addEventListener('touchend', onEnd);
+      window.addEventListener('mousemove', onMouseMove);
+      window.addEventListener('mouseup', onEnd);
+    }
+    return () => {
+      window.removeEventListener('touchmove', onTouchMove);
+      window.removeEventListener('touchend', onEnd);
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onEnd);
+    };
+  }, [isDragging, dragX]);
+
+  return (
+    <div ref={containerRef} className="relative w-72 h-14 bg-zinc-900 border border-zinc-700 rounded-full shadow-2xl overflow-hidden flex items-center select-none">
+      {/* Background Text */}
+      <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-0 opacity-50">
+        <div className="text-zinc-400 text-xs font-bold tracking-[0.2em] uppercase animate-pulse flex items-center gap-2">
+           Slide to Unlock <ChevronRight size={14} />
+        </div>
+      </div>
+      
+      {/* Draggable Thumb */}
+      <div 
+        className="absolute left-1 w-12 h-12 bg-white rounded-full shadow-lg flex items-center justify-center z-10 cursor-grab active:cursor-grabbing"
+        style={{ transform: `translateX(${dragX}px)`, transition: isDragging ? 'none' : 'transform 0.3s cubic-bezier(0.18, 0.89, 0.32, 1.28)' }}
+        onMouseDown={handleStart}
+        onTouchStart={handleStart}
+      >
+        <Lock size={20} className="text-zinc-900" />
+      </div>
+    </div>
+  );
+};
 
 // --- MAP COMPONENT ---
 const GameMap = ({ myPos, participants, leaderPath, isLeafletLoaded, onMarkerClick, selectedUser, isLocked, onMapMove, focusTrigger }) => {
@@ -227,7 +301,7 @@ export default function App() {
   const [selectedUser, setSelectedUser] = useState(null);
   const [isLocked, setIsLocked] = useState(true); 
   const [focusTrigger, setFocusTrigger] = useState(0);
-  const [isUiLocked, setIsUiLocked] = useState(false); // NEW: UI Lock State
+  const [isUiLocked, setIsUiLocked] = useState(false);
   
   const [isSimulating, setIsSimulating] = useState(false);
   const [simStartCity, setSimStartCity] = useState('Jaipur');
@@ -285,7 +359,6 @@ export default function App() {
     if (!userName) return alert("Name required!");
     if (!db) return alert("Firebase not configured!");
     
-    // Reset path tracker
     if (host) lastPathPointRef.current = null;
     lastUploadRef.current = 0;
     lastUploadedPosRef.current = null;
@@ -485,11 +558,12 @@ export default function App() {
 
   if (step === 'login') {
     return (
-      <div className="min-h-[100dvh] bg-zinc-950 text-white flex flex-col items-center pt-20 p-6 overflow-y-auto">
-        <div className="max-w-md w-full space-y-6">
+      <div className="fixed inset-0 bg-zinc-950 text-white overflow-y-auto">
+        <div className="min-h-full flex flex-col justify-center p-6 pt-20">
+          <div className="max-w-md mx-auto w-full space-y-6">
             <div className="text-center">
               <h1 className="text-4xl font-black tracking-tight">CONVOY</h1>
-              <p className="text-blue-500 font-bold tracking-widest text-xs uppercase mt-1">Cloud Edition V4.3</p>
+              <p className="text-blue-500 font-bold tracking-widest text-xs uppercase mt-1">Cloud Edition V4.4</p>
             </div>
             <div className="bg-zinc-900 border border-zinc-800 p-6 rounded-2xl space-y-6">
               <div className="space-y-2">
@@ -526,6 +600,7 @@ export default function App() {
                )}
             </div>
           </div>
+        </div>
       </div>
     );
   }
@@ -551,19 +626,18 @@ export default function App() {
 
       {/* --- TOUCH BLOCKER OVERLAY --- */}
       {isUiLocked && (
-        <div className="absolute inset-0 z-50 bg-black/40 backdrop-blur-sm flex flex-col items-center justify-center animate-in fade-in duration-300">
-           <div className="flex flex-col items-center gap-4 p-6">
-              <ShieldCheck size={48} className="text-green-500 mb-2" />
-              <div className="text-center">
-                <h2 className="text-2xl font-bold text-white tracking-wider">UI LOCKED</h2>
-                <p className="text-zinc-400 text-sm mt-1">Screen touches disabled</p>
+        <div className="absolute inset-0 z-50 bg-black/60 backdrop-blur-md flex flex-col items-center justify-center animate-in fade-in duration-300">
+           <div className="flex flex-col items-center gap-6 p-6">
+              <div className="bg-zinc-800/50 p-4 rounded-full border border-white/10 shadow-2xl">
+                 <ShieldCheck size={48} className="text-emerald-500" />
               </div>
-              <button 
-                onClick={() => setIsUiLocked(false)}
-                className="mt-4 bg-white/10 border border-white/20 hover:bg-white/20 text-white px-8 py-4 rounded-2xl font-black text-lg tracking-widest transition-all active:scale-95 shadow-xl"
-              >
-                TAP TO UNLOCK
-              </button>
+              <div className="text-center space-y-1">
+                <h2 className="text-2xl font-black text-white tracking-wider">UI LOCKED</h2>
+                <p className="text-zinc-400 text-sm font-medium">Touch interactions disabled</p>
+              </div>
+              
+              {/* Swipe Component */}
+              <SwipeToUnlock onUnlock={() => setIsUiLocked(false)} />
            </div>
         </div>
       )}
