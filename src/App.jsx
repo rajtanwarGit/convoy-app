@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { 
   Navigation, Crown, Zap, Share2, LogOut, ArrowRight, 
-  Locate, AlertTriangle, Trash2, Settings, Lock, Unlock, X, Eraser, BatteryCharging
+  Locate, AlertTriangle, Trash2, Settings, Lock, Unlock, X, Eraser, BatteryCharging, Shield, ShieldCheck
 } from 'lucide-react';
 
 // --- FIREBASE IMPORTS ---
@@ -13,14 +13,14 @@ import {
 import { getAuth, signInAnonymously } from "firebase/auth";
 
 /**
- * CONVOY WEB APP - CLOUD EDITION (V4.0 - Battery Optimized)
+ * CONVOY WEB APP - CLOUD EDITION (V4.2 - Touch Lock)
  * * Features:
  * 1. Real-time Cloud Sync.
  * 2. Realistic Simulation (Leader + Follower Bots).
  * 3. Non-blocking Distance HUD.
  * 4. Room Validation & Auto-Cleanup.
- * 5. Smart GPS Throttling (Battery Saving).
- * 6. Leader Control: Clear Trail.
+ * 5. Smart GPS Throttling.
+ * 6. UI Touch Lock (Prevent accidental clicks while driving).
  */
 
 // --- CONFIGURATION ---
@@ -78,7 +78,7 @@ const CAR_COLORS = [
 const GameMap = ({ myPos, participants, leaderPath, isLeafletLoaded, onMarkerClick, selectedUser, isLocked, onMapMove, focusTrigger }) => {
   const mapRef = useRef(null);
   const mapInstanceRef = useRef(null);
-  const layersRef = useRef({ markers: {}, path: null });
+  const layersRef = useRef({ markers: {}, trailGroup: null }); 
 
   useEffect(() => {
     if (!isLeafletLoaded || !mapRef.current || mapInstanceRef.current || !window.L) return;
@@ -97,6 +97,8 @@ const GameMap = ({ myPos, participants, leaderPath, isLeafletLoaded, onMarkerCli
       onMapMove();
     });
 
+    layersRef.current.trailGroup = window.L.layerGroup().addTo(map);
+
     mapInstanceRef.current = map;
   }, [isLeafletLoaded]);
 
@@ -105,23 +107,41 @@ const GameMap = ({ myPos, participants, leaderPath, isLeafletLoaded, onMarkerCli
     const map = mapInstanceRef.current;
     const layers = layersRef.current;
 
-    if (leaderPath && leaderPath.length > 1) {
-      if (layers.path) {
-        layers.path.setLatLngs(leaderPath);
-      } else {
-        layers.path = window.L.polyline(leaderPath, {
-          color: '#a855f7',
-          weight: 4,
-          opacity: 0.8,
-          dashArray: '5, 10',
-          lineCap: 'round'
-        }).addTo(map);
+    if (layers.trailGroup) {
+      layers.trailGroup.clearLayers(); 
+      
+      if (leaderPath && leaderPath.length > 1) {
+        let currentSegment = [leaderPath[0]];
+        for (let i = 1; i < leaderPath.length; i++) {
+          const prev = leaderPath[i-1];
+          const curr = leaderPath[i];
+          const dist = getDistanceKm(prev.lat, prev.lng, curr.lat, curr.lng);
+
+          if (dist > 1.0) {
+             if (currentSegment.length > 1) {
+               window.L.polyline(currentSegment, {
+                 color: '#a855f7',
+                 weight: 4,
+                 opacity: 0.8,
+                 dashArray: '5, 10',
+                 lineCap: 'round'
+               }).addTo(layers.trailGroup);
+             }
+             currentSegment = [curr];
+          } else {
+             currentSegment.push(curr);
+          }
+        }
+        if (currentSegment.length > 1) {
+           window.L.polyline(currentSegment, {
+             color: '#a855f7',
+             weight: 4,
+             opacity: 0.8,
+             dashArray: '5, 10',
+             lineCap: 'round'
+           }).addTo(layers.trailGroup);
+        }
       }
-    } else if (layers.path && (!leaderPath || leaderPath.length < 2)) {
-       if (layers.path) {
-         layers.path.remove();
-         layers.path = null;
-       }
     }
 
     participants.forEach(p => {
@@ -206,6 +226,7 @@ export default function App() {
   const [selectedUser, setSelectedUser] = useState(null);
   const [isLocked, setIsLocked] = useState(true); 
   const [focusTrigger, setFocusTrigger] = useState(0);
+  const [isUiLocked, setIsUiLocked] = useState(false); // NEW: UI Lock State
   
   const [isSimulating, setIsSimulating] = useState(false);
   const [simStartCity, setSimStartCity] = useState('Jaipur');
@@ -220,7 +241,6 @@ export default function App() {
   const [isLeafletLoaded, setIsLeafletLoaded] = useState(false);
   const [userId, setUserId] = useState(localStorage.getItem('convoy_uid') || `user_${Math.random().toString(36).substr(2, 9)}`);
   
-  // Refs for Throttling & Logic
   const lastPathPointRef = useRef(null);
   const lastUploadRef = useRef(0);
   const lastUploadedPosRef = useRef(null);
@@ -324,22 +344,13 @@ export default function App() {
     }
 
     try {
-      // 1. Delete self (User document)
       await deleteDoc(doc(db, `sessions/${sessionCode}/users/${userId}`));
-
-      // 2. Check for remaining users
       const remainingSnapshot = await getDocs(collection(db, `sessions/${sessionCode}/users`));
 
-      // 3. AUTO-CLEANUP: If I was Host OR if the room is now empty -> Delete Everything
       if (isHost || remainingSnapshot.empty) {
         const batch = writeBatch(db);
-        
-        // Delete all remaining users/bots
         remainingSnapshot.forEach(doc => batch.delete(doc.ref));
-        
-        // Delete the session document itself (to be clean)
         batch.delete(doc(db, "sessions", sessionCode));
-
         await batch.commit();
       }
     } catch (e) {
@@ -369,7 +380,6 @@ export default function App() {
     let simInterval;
 
     if (isSimulating && isHost && simRoute.length > 0) {
-      // --- SIMULATION LOOP ---
       simInterval = setInterval(() => {
         setSimIndex(prev => {
           const nextIndex = prev + 1;
@@ -382,11 +392,10 @@ export default function App() {
             lastActive: serverTimestamp()
           };
 
-          // Trail Logic: Only add point if > 30m away from last point
           const lastPoint = lastPathPointRef.current;
           const dist = lastPoint ? getDistanceKm(lastPoint.lat, lastPoint.lng, nextPos.lat, nextPos.lng) : 100;
           
-          if (dist > 0.03) { // 0.03 km = 30 meters
+          if (dist > 0.03) {
              payload.path = arrayUnion({lat: nextPos.lat, lng: nextPos.lng});
              lastPathPointRef.current = nextPos;
           }
@@ -405,30 +414,17 @@ export default function App() {
         });
       }, 1000); 
     } else {
-      // --- REAL GPS LOOP (SMART THROTTLING) ---
       watchId = navigator.geolocation.watchPosition(
         (pos) => {
           const { latitude, longitude, speed } = pos.coords;
-          
-          // 1. Always update LOCAL UI immediately (for smooth feel)
           setMyPos({ lat: latitude, lng: longitude });
-
-          // 2. Decide if we should upload to Cloud
           const now = Date.now();
           const timeDiff = now - lastUploadRef.current;
-          
-          // Distance from last UPLOADED position (not last local position)
           const distMoved = lastUploadedPosRef.current 
             ? getDistanceKm(lastUploadedPosRef.current.lat, lastUploadedPosRef.current.lng, latitude, longitude)
-            : 100; // Force first
+            : 100;
 
           let shouldUpload = false;
-          
-          // Strategy: 
-          // If Moving Fast (>30km/h approx 8m/s): Update if >5s OR >50m
-          // If Slow/Stopped: Update if >10s OR >30m
-          // Heartbeat: Always update if >60s
-          
           const isMovingFast = speed && speed > 8; 
 
           if (isMovingFast) {
@@ -437,16 +433,14 @@ export default function App() {
              if (timeDiff > 10000 || distMoved > 0.03) shouldUpload = true;
           }
           
-          if (timeDiff > 60000) shouldUpload = true; // Heartbeat
+          if (timeDiff > 60000) shouldUpload = true;
 
           if (shouldUpload) {
               const payload = { lat: latitude, lng: longitude, lastActive: serverTimestamp() };
               
               if (isHost) {
-                 // Leader Trail Logic (Separate from throttling logic slightly to ensure detail)
                  const lastPathPoint = lastPathPointRef.current;
                  const distFromPath = lastPathPoint ? getDistanceKm(lastPathPoint.lat, lastPathPoint.lng, latitude, longitude) : 100;
-                 
                  if (distFromPath > 0.03) { 
                      payload.path = arrayUnion({ lat: latitude, lng: longitude });
                      lastPathPointRef.current = { lat: latitude, lng: longitude };
@@ -462,7 +456,7 @@ export default function App() {
           }
         },
         (err) => setStatusMsg("GPS Error: " + err.message),
-        { enableHighAccuracy: true, distanceFilter: 5 } // Keep strictly locally accurate
+        { enableHighAccuracy: true, distanceFilter: 5 }
       );
     }
     return () => { if (watchId) navigator.geolocation.clearWatch(watchId); if (simInterval) clearInterval(simInterval); };
@@ -495,7 +489,7 @@ export default function App() {
           <div className="max-w-md mx-auto w-full space-y-6">
             <div className="text-center">
               <h1 className="text-4xl font-black tracking-tight">CONVOY</h1>
-              <p className="text-blue-500 font-bold tracking-widest text-xs uppercase mt-1">Cloud Edition V4.0</p>
+              <p className="text-blue-500 font-bold tracking-widest text-xs uppercase mt-1">Cloud Edition V4.2</p>
             </div>
             <div className="bg-zinc-900 border border-zinc-800 p-6 rounded-2xl space-y-6">
               <div className="space-y-2">
@@ -517,15 +511,10 @@ export default function App() {
               </div>
             </div>
 
-            {/* SIMULATION TOGGLE - BOTTOM DISCREET */}
             <div className="flex flex-col items-center">
-               <button 
-                  onClick={() => setIsSimulating(!isSimulating)}
-                  className="text-zinc-700 text-xs font-bold uppercase hover:text-zinc-500 transition-colors flex items-center gap-2"
-               >
+               <button onClick={() => setIsSimulating(!isSimulating)} className="text-zinc-700 text-xs font-bold uppercase hover:text-zinc-500 transition-colors flex items-center gap-2">
                   <Settings size={12} /> {isSimulating ? 'Disable Simulation' : 'Enable Simulation'}
                </button>
-               
                {isSimulating && (
                   <div className="mt-4 w-full bg-zinc-900/50 border border-zinc-800 p-4 rounded-xl animate-in slide-in-from-bottom-2">
                       <div className="flex gap-2">
@@ -536,7 +525,6 @@ export default function App() {
                   </div>
                )}
             </div>
-
           </div>
         </div>
       </div>
@@ -561,6 +549,25 @@ export default function App() {
           focusTrigger={focusTrigger}
         />
       </div>
+
+      {/* --- TOUCH BLOCKER OVERLAY --- */}
+      {isUiLocked && (
+        <div className="absolute inset-0 z-50 bg-black/40 backdrop-blur-sm flex flex-col items-center justify-center animate-in fade-in duration-300">
+           <div className="flex flex-col items-center gap-4 p-6">
+              <ShieldCheck size={48} className="text-green-500 mb-2" />
+              <div className="text-center">
+                <h2 className="text-2xl font-bold text-white tracking-wider">UI LOCKED</h2>
+                <p className="text-zinc-400 text-sm mt-1">Screen touches disabled</p>
+              </div>
+              <button 
+                onClick={() => setIsUiLocked(false)}
+                className="mt-4 bg-white/10 border border-white/20 hover:bg-white/20 text-white px-8 py-4 rounded-2xl font-black text-lg tracking-widest transition-all active:scale-95 shadow-xl"
+              >
+                TAP TO UNLOCK
+              </button>
+           </div>
+        </div>
+      )}
 
       <div className="absolute top-0 left-0 right-0 p-4 z-10 flex flex-col items-center pointer-events-none space-y-4">
         <div className="w-full flex justify-between pointer-events-auto">
@@ -609,6 +616,15 @@ export default function App() {
               </p>
             </div>
             <div className="flex gap-2">
+                {/* --- UI LOCK BUTTON --- */}
+                <button 
+                   onClick={() => setIsUiLocked(true)}
+                   className="p-3 rounded-xl shadow-lg bg-zinc-800 text-zinc-400 hover:text-white transition-colors"
+                   title="Lock Screen"
+                >
+                   <Shield size={20} />
+                </button>
+
                 <button onClick={() => { setIsLocked(!isLocked); setSelectedUser(null); }} className={`p-3 rounded-xl shadow-lg transition-colors ${isLocked ? 'bg-blue-600 text-white' : 'bg-zinc-800 text-zinc-500'}`}>
                     {isLocked ? <Lock size={20} /> : <Unlock size={20} />}
                 </button>
