@@ -13,7 +13,7 @@ import {
 import { getAuth, signInAnonymously } from "firebase/auth";
 
 /**
- * CONVOY WEB APP - CLOUD EDITION (V5.1 - Fix Map Tap)
+ * CONVOY WEB APP - CLOUD EDITION (V5.0 - Sun Mode & Markers)
  * * Features:
  * 1. Real-time Cloud Sync.
  * 2. Realistic Simulation.
@@ -38,7 +38,6 @@ const firebaseConfig = {
   appId: "1:962486154653:web:60bcea4afb105b82f56b74",
   measurementId: "G-HBYJDHZ9J4"
 };
-
 // Initialize Firebase
 let db, auth;
 try {
@@ -166,15 +165,6 @@ const GameMap = ({
   const mapRef = useRef(null);
   const mapInstanceRef = useRef(null);
   const layersRef = useRef({ markers: {}, customMarkers: {}, trailGroup: null, tileLayer: null }); 
-  
-  // Refs to ensure listeners always see fresh props
-  const onMapClickRef = useRef(onMapClick);
-  const onMapMoveRef = useRef(onMapMove);
-
-  useEffect(() => {
-    onMapClickRef.current = onMapClick;
-    onMapMoveRef.current = onMapMove;
-  }, [onMapClick, onMapMove]);
 
   // 1. Init Map
   useEffect(() => {
@@ -192,11 +182,11 @@ const GameMap = ({
     }).addTo(map);
 
     map.on('dragstart', () => {
-      if (onMapMoveRef.current) onMapMoveRef.current();
+      onMapMove();
     });
 
     map.on('click', (e) => {
-        if (onMapClickRef.current) onMapClickRef.current(e.latlng);
+        onMapClick(e.latlng);
     });
 
     layersRef.current.trailGroup = window.L.layerGroup().addTo(map);
@@ -656,7 +646,7 @@ export default function App() {
           <div className="max-w-md mx-auto w-full space-y-6">
             <div className="text-center">
               <h1 className="text-4xl font-black tracking-tight">CONVOY</h1>
-              <p className="text-blue-500 font-bold tracking-widest text-xs uppercase mt-1">Cloud Edition V5.1</p>
+              <p className="text-blue-500 font-bold tracking-widest text-xs uppercase mt-1">Cloud Edition V5.0</p>
             </div>
             <div className={`${cardClass} border p-6 rounded-2xl space-y-6`}>
               <div className="space-y-2">
