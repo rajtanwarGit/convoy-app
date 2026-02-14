@@ -38,6 +38,7 @@ const firebaseConfig = {
   appId: "1:962486154653:web:60bcea4afb105b82f56b74",
   measurementId: "G-HBYJDHZ9J4"
 };
+
 // Initialize Firebase
 let db, auth;
 try {
@@ -841,14 +842,7 @@ export default function App() {
           </div>
           <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-hide">
              {/* Sorted List */}
-             {useMemo(() => {
-                 if (!participants.find(p => p.isLeader)) return participants;
-                 const leader = participants.find(p => p.isLeader);
-                 const others = participants.filter(p => !p.isLeader).sort((a, b) => {
-                    return getDistanceKm(leader.lat, leader.lng, a.lat, a.lng) - getDistanceKm(leader.lat, leader.lng, b.lat, b.lng);
-                 });
-                 return [leader, ...others];
-             }, [participants]).map(p => {
+             {sortedParticipants.map(p => {
                 const ghost = isGhost(p.lastActive);
                 return (
                 <div key={p.id} className={`flex-shrink-0 border rounded-lg p-2 px-3 flex items-center gap-2 active:scale-95 transition-transform ${theme === 'light' ? 'bg-white border-zinc-200' : 'bg-zinc-950 border-zinc-800'}`} onClick={() => handleMarkerClick(p)}>
