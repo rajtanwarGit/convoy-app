@@ -13,7 +13,7 @@ import {
 import { getAuth, signInAnonymously } from "firebase/auth";
 
 /**
- * CONVOY WEB APP - CLOUD EDITION (V5.1 - Fix Map Tap)
+ * CONVOY WEB APP - CLOUD EDITION (V5.2 - Live Theme Toggle)
  * * Features:
  * 1. Real-time Cloud Sync.
  * 2. Realistic Simulation.
@@ -23,7 +23,7 @@ import { getAuth, signInAnonymously } from "firebase/auth";
  * 6. Slide-to-Unlock UI.
  * 7. GPS Accuracy Filter.
  * 8. Ghost Mode.
- * 9. Sun/Light Mode Toggle.
+ * 9. Sun/Light Mode Toggle (Accessible in session).
  * 10. Leader Markers (Comments on Map).
  */
 
@@ -217,9 +217,14 @@ const GameMap = ({
     // Add new layer based on theme
     const tileUrl = theme === 'light' 
         ? 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png'
+        : 'https://{s}.basas.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png';
+
+    // Wait, fixed the domain typo in tileUrl (basas -> basemaps)
+    const correctedTileUrl = theme === 'light' 
+        ? 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png'
         : 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png';
 
-    const newLayer = window.L.tileLayer(tileUrl, { maxZoom: 20 }).addTo(map);
+    const newLayer = window.L.tileLayer(correctedTileUrl, { maxZoom: 20 }).addTo(map);
     layersRef.current.tileLayer = newLayer;
     newLayer.bringToBack();
 
@@ -656,7 +661,7 @@ export default function App() {
           <div className="max-w-md mx-auto w-full space-y-6">
             <div className="text-center">
               <h1 className="text-4xl font-black tracking-tight">CONVOY</h1>
-              <p className="text-blue-500 font-bold tracking-widest text-xs uppercase mt-1">Cloud Edition V5.1</p>
+              <p className="text-blue-500 font-bold tracking-widest text-xs uppercase mt-1">Cloud Edition V5.2</p>
             </div>
             <div className={`${cardClass} border p-6 rounded-2xl space-y-6`}>
               <div className="space-y-2">
@@ -824,19 +829,30 @@ export default function App() {
                     <button 
                        onClick={() => setIsPlacingMarker(!isPlacingMarker)}
                        className={`p-3 rounded-xl shadow-lg transition-colors ${isPlacingMarker ? 'bg-blue-600 text-white' : (theme === 'light' ? 'bg-zinc-100 text-zinc-600' : 'bg-zinc-800 text-zinc-400')}`}
+                       title="Place Comment"
                     >
                        {isPlacingMarker ? <X size={20} /> : <Plus size={20} />}
                     </button>
                 )}
 
+                {/* --- THEME TOGGLE BUTTON --- */}
+                <button 
+                   onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')}
+                   className={`p-3 rounded-xl shadow-lg transition-colors ${theme === 'light' ? 'bg-zinc-100 text-zinc-600' : 'bg-zinc-800 text-zinc-400'}`}
+                   title="Toggle Theme"
+                >
+                   {theme === 'light' ? <Moon size={20} /> : <Sun size={20} />}
+                </button>
+
                 <button 
                    onClick={() => setIsUiLocked(true)}
                    className={`p-3 rounded-xl shadow-lg transition-colors ${theme === 'light' ? 'bg-zinc-100 text-zinc-600' : 'bg-zinc-800 text-zinc-400'}`}
+                   title="Lock Screen"
                 >
                    <Shield size={20} />
                 </button>
 
-                <button onClick={() => { setIsLocked(!isLocked); setSelectedUser(null); }} className={`p-3 rounded-xl shadow-lg transition-colors ${isLocked ? 'bg-blue-600 text-white' : (theme === 'light' ? 'bg-zinc-100 text-zinc-600' : 'bg-zinc-800 text-zinc-500')}`}>
+                <button onClick={() => { setIsLocked(!isLocked); setSelectedUser(null); }} className={`p-3 rounded-xl shadow-lg transition-colors ${isLocked ? 'bg-blue-600 text-white' : (theme === 'light' ? 'bg-zinc-100 text-zinc-600' : 'bg-zinc-800 text-zinc-500')}`} title="Map Lock">
                     {isLocked ? <Lock size={20} /> : <Unlock size={20} />}
                 </button>
                 
@@ -844,21 +860,14 @@ export default function App() {
                     setIsLocked(true); 
                     setSelectedUser(null); 
                     setFocusTrigger(prev => prev + 1);
-                }} className={`p-3 rounded-xl shadow-lg transition-colors ${theme === 'light' ? 'bg-zinc-100 text-zinc-900' : 'bg-zinc-800 text-white'}`}>
+                }} className={`p-3 rounded-xl shadow-lg transition-colors ${theme === 'light' ? 'bg-zinc-100 text-zinc-900' : 'bg-zinc-800 text-white'}`} title="Locate Me">
                     <Locate size={20} />
                 </button>
             </div>
           </div>
           <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-hide">
              {/* Sorted List */}
-             {useMemo(() => {
-                 if (!participants.find(p => p.isLeader)) return participants;
-                 const leader = participants.find(p => p.isLeader);
-                 const others = participants.filter(p => !p.isLeader).sort((a, b) => {
-                    return getDistanceKm(leader.lat, leader.lng, a.lat, a.lng) - getDistanceKm(leader.lat, leader.lng, b.lat, b.lng);
-                 });
-                 return [leader, ...others];
-             }, [participants]).map(p => {
+             {sortedParticipants.map(p => {
                 const ghost = isGhost(p.lastActive);
                 return (
                 <div key={p.id} className={`flex-shrink-0 border rounded-lg p-2 px-3 flex items-center gap-2 active:scale-95 transition-transform ${theme === 'light' ? 'bg-white border-zinc-200' : 'bg-zinc-950 border-zinc-800'}`} onClick={() => handleMarkerClick(p)}>
