@@ -2,103 +2,63 @@
 
 A tactical, real-time GPS tracker for road trips.
 
-Convoy Radar functions like a private "Waze" or "Google Maps" group session where one user (the Leader) dictates the route, and everyone else stays in sync. It features a minimal, high-contrast dark interface designed for night driving and battery efficiency.
+Convoy Radar functions like a private "Waze" group session where one user (the Leader) dictates the route, and everyone else stays in sync. It features a minimal, high-contrast dark interface designed for night driving and battery efficiency.
 
 ✨ Key Features
 
 📍 Real-Time Tracking: View all convoy members on a shared, lag-free map.
 
-👑 Leader Trail: The host leaves a Neon Purple breadcrumb trail. If the leader takes a detour, followers see exactly where they went.
+👑 Leader Trail: The host leaves a Neon Purple breadcrumb trail showing their exact path.
 
-🔋 Smart Battery Eco: Uses adaptive GPS throttling. Updates frequently when moving fast, but sleeps when stopped to save your battery.
+🔋 Smart Battery Eco: Adaptive GPS throttling saves battery while stopped.
 
-🛡️ Driver UI Lock: A dedicated "Lock Mode" prevents accidental touches if the phone is in a cup holder or pocket.
+🛡️ Driver UI Lock: Prevents accidental touches while the phone is in a cup holder.
 
-📏 Distance HUD: Tap any car to see the live distance between you and them.
+📏 Distance HUD: Tap any car to see the live distance from you.
 
-🎮 Simulation Mode: Includes a realistic simulation (Jaipur -> Sikar) with AI bots ("Viper", "Goose") to test the app without driving.
+🎮 Simulation Mode: Includes a realistic simulation to test the app without driving.
 
-🧹 Auto-Cleanup: Session data is automatically wiped from the cloud when the leader ends the trip.
+📱 How to Use (PWA)
 
-🚀 Getting Started
+No App Store required. You can install this directly from your browser for a full-screen experience:
 
-Prerequisites
+Open the deployed link in Chrome (Android) or Safari (iOS).
 
-Node.js (v18 or higher)
+Tap the Menu (Three dots ⋮ or Share button).
 
-A Google account (for Firebase)
+Select "Add to Home Screen".
 
-1. Installation
+Launch the app from your home screen.
 
-# Clone the repository
+💻 Local Development
+
+Clone & Install:
+
 git clone [https://github.com/your-username/convoy-radar.git](https://github.com/your-username/convoy-radar.git)
-
-# Enter the directory
 cd convoy-radar
-
-# Install dependencies
 npm install
 
 
-2. Firebase Setup (Crucial)
+Setup Firebase:
 
-This app uses Firebase Cloud Firestore for real-time syncing. You need your own free API keys.
+Create a project at Firebase Console.
 
-Go to the Firebase Console.
+Enable Firestore Database (Test Mode) and Authentication (Anonymous).
 
-Create a new project.
+Copy your firebaseConfig and paste it into src/App.jsx.
 
-Enable Database: Go to Build > Firestore Database -> Create Database -> Select Test Mode.
-
-Enable Auth: Go to Build > Authentication -> Get Started -> Enable Anonymous sign-in.
-
-Get Keys: Go to Project Settings -> General -> Scroll down to "Your apps" -> Select Web (</>) -> Copy the firebaseConfig object.
-
-3. Configuration
-
-Open src/App.jsx and find the configuration section at the top. Paste your keys there:
-
-// src/App.jsx
-const firebaseConfig = {
-  apiKey: "YOUR_PASTED_KEY",
-  authDomain: "...",
-  projectId: "...",
-  // ... rest of your keys
-};
-
-
-4. Run Locally
+Run:
 
 npm run dev
 
 
-Note: GPS features require HTTPS on mobile devices. For local testing on a phone, use the Simulation Mode or deploy to Vercel.
-
-📱 How to Install (PWA)
-
-You don't need an App Store. You can install this directly from the browser:
-
-Deploy the app to Vercel (or use your Vercel link).
-
-Open the link in Chrome (Android) or Safari (iOS).
-
-Tap the Menu (Three dots or Share button).
-
-Select "Add to Home Screen".
-
-Launch the app from your home screen for a full-screen experience.
-
 🛠️ Tech Stack
 
-Frontend: React (Vite)
-
-Styling: Tailwind CSS
+Frontend: React (Vite) + Tailwind CSS
 
 Maps: Leaflet & OpenStreetMap (CartoDB Dark Matter tiles)
 
-Backend: Firebase Firestore (Realtime DB) & Firebase Auth
-
-Icons: Lucide React
+Backend: Firebase Firestore & Auth
 
 📄 License
 
