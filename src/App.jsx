@@ -13,7 +13,7 @@ import {
 import { getAuth, signInAnonymously } from "firebase/auth";
 
 /**
- * CONVOY WEB APP - CLOUD EDITION (V4.5 - Accuracy Filter)
+ * CONVOY WEB APP - CLOUD EDITION (V4.6 - Ghost Mode)
  * * Features:
  * 1. Real-time Cloud Sync.
  * 2. Realistic Simulation.
@@ -21,7 +21,8 @@ import { getAuth, signInAnonymously } from "firebase/auth";
  * 4. Room Validation & Auto-Cleanup.
  * 5. Smart GPS Throttling.
  * 6. Slide-to-Unlock UI.
- * 7. GPS Accuracy Filter (Prevents zigzag trails).
+ * 7. GPS Accuracy Filter.
+ * 8. Ghost Mode (>5min inactivity detection).
  */
 
 // --- CONFIGURATION ---
@@ -60,6 +61,15 @@ const getDistanceKm = (lat1, lon1, lat2, lon2) => {
     Math.cos(lat1 * (Math.PI/180)) * Math.cos(lat2 * (Math.PI/180)) * Math.sin(dLon/2) * Math.sin(dLon/2); 
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)); 
   return R * c; 
+};
+
+// Helper: Check if user is inactive > 5 mins
+const isGhost = (lastActiveTimestamp) => {
+  if (!lastActiveTimestamp) return false;
+  const now = Date.now();
+  // Handle Firestore Timestamp vs Date object vs Number
+  const lastActive = lastActiveTimestamp.toMillis ? lastActiveTimestamp.toMillis() : new Date(lastActiveTimestamp).getTime();
+  return (now - lastActive) > (5 * 60 * 1000); // 5 minutes in ms
 };
 
 const CAR_COLORS = [
@@ -218,31 +228,44 @@ const GameMap = ({ myPos, participants, leaderPath, isLeafletLoaded, onMarkerCli
     participants.forEach(p => {
       if (!p.lat || !p.lng) return;
 
-      if (!layers.markers[p.id]) {
-        const html = `
-          <div style="display: flex; flex-direction: column; align-items: center;">
+      // Check Ghost Status
+      const ghost = isGhost(p.lastActive);
+      const markerColor = ghost ? '#71717a' : p.color; // Zinc-500 for ghost
+      const shadowColor = ghost ? 'transparent' : p.color;
+      const opacity = ghost ? 0.6 : 1.0;
+      const borderColor = ghost ? '#a1a1aa' : 'white';
+
+      const html = `
+          <div style="display: flex; flex-direction: column; align-items: center; opacity: ${opacity}; transition: opacity 0.5s;">
             <div style="
               width: ${p.isLeader ? '24px' : '18px'};
               height: ${p.isLeader ? '24px' : '18px'};
-              background-color: ${p.color};
-              border: 2px solid white;
-              box-shadow: 0 0 15px ${p.color};
+              background-color: ${markerColor};
+              border: 2px solid ${borderColor};
+              box-shadow: 0 0 15px ${shadowColor};
               transform: rotate(45deg);
               margin-bottom: 4px;
+              transition: background-color 0.5s;
             "></div>
             <span style="
               font-family: sans-serif; font-size: 10px; font-weight: bold;
-              color: ${p.color}; text-shadow: 0 1px 2px black;
+              color: ${ghost ? '#a1a1aa' : p.color}; 
+              text-shadow: 0 1px 2px black;
               background: rgba(0,0,0,0.8); padding: 2px 6px; border-radius: 4px;
-            ">${p.name}</span>
+            ">${p.name} ${ghost ? '?' : ''}</span>
           </div>
         `;
-        const icon = window.L.divIcon({ className: '', html, iconSize: [40, 40], iconAnchor: [20, 20] });
+        
+      const icon = window.L.divIcon({ className: '', html, iconSize: [40, 40], iconAnchor: [20, 20] });
+
+      if (!layers.markers[p.id]) {
         const marker = window.L.marker([p.lat, p.lng], { icon }).addTo(map);
         marker.on('click', () => onMarkerClick(p));
         layers.markers[p.id] = marker;
       } else {
-        layers.markers[p.id].setLatLng([p.lat, p.lng]);
+        const marker = layers.markers[p.id];
+        marker.setLatLng([p.lat, p.lng]);
+        marker.setIcon(icon); // Update icon to reflect Ghost changes
       }
     });
 
@@ -562,7 +585,7 @@ export default function App() {
           <div className="max-w-md mx-auto w-full space-y-6">
             <div className="text-center">
               <h1 className="text-4xl font-black tracking-tight">CONVOY</h1>
-              <p className="text-blue-500 font-bold tracking-widest text-xs uppercase mt-1">Cloud Edition V4.5</p>
+              <p className="text-blue-500 font-bold tracking-widest text-xs uppercase mt-1">Cloud Edition V4.6</p>
             </div>
             <div className="bg-zinc-900 border border-zinc-800 p-6 rounded-2xl space-y-6">
               <div className="space-y-2">
@@ -710,12 +733,15 @@ export default function App() {
             </div>
           </div>
           <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-hide">
-             {sortedParticipants.map(p => (
+             {sortedParticipants.map(p => {
+                const ghost = isGhost(p.lastActive);
+                return (
                 <div key={p.id} className="flex-shrink-0 bg-zinc-950 border border-zinc-800 rounded-lg p-2 px-3 flex items-center gap-2 active:scale-95 transition-transform" onClick={() => handleMarkerClick(p)}>
-                   <div style={{ backgroundColor: p.color }} className="w-3 h-3 rounded-sm"></div>
-                   <span className="text-zinc-300 text-xs">{p.name} {p.isLeader && '👑'}</span>
+                   <div style={{ backgroundColor: ghost ? '#71717a' : p.color }} className="w-3 h-3 rounded-sm"></div>
+                   <span className={`text-zinc-300 text-xs ${ghost ? 'text-zinc-500' : ''}`}>{p.name} {p.isLeader && '👑'} {ghost && <span className="text-[10px] ml-1 opacity-50 bg-zinc-800 px-1 rounded">LOST</span>}</span>
                 </div>
-             ))}
+                )
+             })}
           </div>
         </div>
       </div>
