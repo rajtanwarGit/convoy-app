@@ -13,13 +13,13 @@ import {
 import { getAuth, signInAnonymously } from "firebase/auth";
 
 /**
- * CONVOY WEB APP - CLOUD EDITION (V5.7 - Stable Theme Switching)
+ * CONVOY WEB APP - CLOUD EDITION (V5.8 - Stable UI)
  * * Features:
  * 1. Real-time Cloud Sync & Ghost Mode.
  * 2. Realistic Simulation.
  * 3. Smart GPS Throttling & Accuracy Filter.
  * 4. Slide-to-Unlock UI.
- * 5. Sun/Light Mode (Fixed: No disappearing map).
+ * 5. Sun/Light Mode (Selection at Login only).
  * 6. Leader Markers.
  */
 
@@ -172,7 +172,7 @@ const GameMap = ({
     onMapMoveRef.current = onMapMove;
   }, [onMapClick, onMapMove]);
 
-  // 1. Init Map (Container & Event Listeners)
+  // 1. Init Map
   useEffect(() => {
     if (!isLeafletLoaded || !mapRef.current || mapInstanceRef.current || !window.L) return;
 
@@ -182,7 +182,14 @@ const GameMap = ({
       zoomSnap: 0.1,
     }).setView([myPos.lat, myPos.lng], 15);
 
-    // Note: Tile layer is handled in effect #2 to support theme switching
+    // Initial Tile Layer - Selected based on initial theme prop
+    const tileUrl = theme === 'light' 
+        ? 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png'
+        : 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png';
+
+    layersRef.current.tileLayer = window.L.tileLayer(tileUrl, {
+      maxZoom: 20
+    }).addTo(map);
 
     map.on('dragstart', () => {
       if (onMapMoveRef.current) onMapMoveRef.current();
@@ -195,29 +202,7 @@ const GameMap = ({
     layersRef.current.trailGroup = window.L.layerGroup().addTo(map);
 
     mapInstanceRef.current = map;
-  }, [isLeafletLoaded]);
-
-  // 2. Handle Theme Change (Robust Swap)
-  useEffect(() => {
-    if (!mapInstanceRef.current || !window.L) return;
-    const map = mapInstanceRef.current;
-    
-    const tileUrl = theme === 'light' 
-        ? 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png'
-        : 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png';
-
-    // Create New Layer
-    const newLayer = window.L.tileLayer(tileUrl, { maxZoom: 20 });
-    newLayer.addTo(map);
-    newLayer.bringToBack();
-
-    // Remove Old Layer (After new one is added to prevent flashing)
-    if (layersRef.current.tileLayer) {
-        map.removeLayer(layersRef.current.tileLayer);
-    }
-    layersRef.current.tileLayer = newLayer;
-
-  }, [theme, isLeafletLoaded]);
+  }, [isLeafletLoaded]); // Removed theme from dependency to prevent re-init issues
 
   // 3. Cursor Change for Placing Marker
   useEffect(() => {
@@ -226,7 +211,7 @@ const GameMap = ({
     }
   }, [isPlacingMarker]);
 
-  // 4. Update Visuals (Trails, Cars, Markers)
+  // 4. Update Visuals
   useEffect(() => {
     if (!mapInstanceRef.current || !window.L) return;
     const map = mapInstanceRef.current;
@@ -636,7 +621,7 @@ export default function App() {
           <div className="max-w-md mx-auto w-full space-y-6">
             <div className="text-center">
               <h1 className="text-4xl font-black tracking-tight">CONVOY</h1>
-              <p className="text-blue-500 font-bold tracking-widest text-xs uppercase mt-1">Cloud Edition V5.7</p>
+              <p className="text-blue-500 font-bold tracking-widest text-xs uppercase mt-1">Cloud Edition V5.8</p>
             </div>
             <div className={`${cardClass} border p-6 rounded-2xl space-y-6`}>
               <div className="space-y-2">
@@ -804,13 +789,7 @@ export default function App() {
                     </button>
                 )}
 
-                <button 
-                   onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')}
-                   className={`p-2 rounded-xl shadow-lg transition-colors ${theme === 'light' ? 'bg-zinc-100 text-zinc-600' : 'bg-zinc-800 text-zinc-400'}`}
-                   title="Toggle Theme"
-                >
-                   {theme === 'light' ? <Moon size={18} /> : <Sun size={18} />}
-                </button>
+                {/* Theme Toggle Removed from Map View per request */}
 
                 <button 
                    onClick={() => setIsUiLocked(true)}
