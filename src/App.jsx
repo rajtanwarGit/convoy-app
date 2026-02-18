@@ -13,19 +13,14 @@ import {
 import { getAuth, signInAnonymously } from "firebase/auth";
 
 /**
- * CONVOY WEB APP - CLOUD EDITION (V5.6 - Critical Fixes)
+ * CONVOY WEB APP - CLOUD EDITION (V5.7 - Stable Theme Switching)
  * * Features:
- * 1. Real-time Cloud Sync.
+ * 1. Real-time Cloud Sync & Ghost Mode.
  * 2. Realistic Simulation.
- * 3. Non-blocking Distance HUD.
- * 4. Room Validation & Auto-Cleanup.
- * 5. Smart GPS Throttling.
- * 6. Slide-to-Unlock UI.
- * 7. GPS Accuracy Filter.
- * 8. Ghost Mode.
- * 9. Smooth Sun/Light Mode Toggle.
- * 10. Leader Markers.
- * 11. FIX: Removed illegal hook usage causing crash.
+ * 3. Smart GPS Throttling & Accuracy Filter.
+ * 4. Slide-to-Unlock UI.
+ * 5. Sun/Light Mode (Fixed: No disappearing map).
+ * 6. Leader Markers.
  */
 
 // --- CONFIGURATION ---
@@ -177,7 +172,7 @@ const GameMap = ({
     onMapMoveRef.current = onMapMove;
   }, [onMapClick, onMapMove]);
 
-  // 1. Init Map
+  // 1. Init Map (Container & Event Listeners)
   useEffect(() => {
     if (!isLeafletLoaded || !mapRef.current || mapInstanceRef.current || !window.L) return;
 
@@ -187,10 +182,7 @@ const GameMap = ({
       zoomSnap: 0.1,
     }).setView([myPos.lat, myPos.lng], 15);
 
-    // Initial Tile Layer
-    layersRef.current.tileLayer = window.L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-      maxZoom: 20
-    }).addTo(map);
+    // Note: Tile layer is handled in effect #2 to support theme switching
 
     map.on('dragstart', () => {
       if (onMapMoveRef.current) onMapMoveRef.current();
@@ -205,18 +197,27 @@ const GameMap = ({
     mapInstanceRef.current = map;
   }, [isLeafletLoaded]);
 
-  // 2. Handle Theme Change (Safe Tile Swap)
+  // 2. Handle Theme Change (Robust Swap)
   useEffect(() => {
-    if (!mapInstanceRef.current || !layersRef.current.tileLayer || !window.L) return;
+    if (!mapInstanceRef.current || !window.L) return;
+    const map = mapInstanceRef.current;
     
     const tileUrl = theme === 'light' 
         ? 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png'
         : 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png';
 
-    // Efficiently swap URL without destroying layer to prevent blinking/blank map
-    layersRef.current.tileLayer.setUrl(tileUrl);
+    // Create New Layer
+    const newLayer = window.L.tileLayer(tileUrl, { maxZoom: 20 });
+    newLayer.addTo(map);
+    newLayer.bringToBack();
 
-  }, [theme]);
+    // Remove Old Layer (After new one is added to prevent flashing)
+    if (layersRef.current.tileLayer) {
+        map.removeLayer(layersRef.current.tileLayer);
+    }
+    layersRef.current.tileLayer = newLayer;
+
+  }, [theme, isLeafletLoaded]);
 
   // 3. Cursor Change for Placing Marker
   useEffect(() => {
@@ -225,7 +226,7 @@ const GameMap = ({
     }
   }, [isPlacingMarker]);
 
-  // 4. Update Visuals
+  // 4. Update Visuals (Trails, Cars, Markers)
   useEffect(() => {
     if (!mapInstanceRef.current || !window.L) return;
     const map = mapInstanceRef.current;
@@ -635,7 +636,7 @@ export default function App() {
           <div className="max-w-md mx-auto w-full space-y-6">
             <div className="text-center">
               <h1 className="text-4xl font-black tracking-tight">CONVOY</h1>
-              <p className="text-blue-500 font-bold tracking-widest text-xs uppercase mt-1">Cloud Edition V5.6</p>
+              <p className="text-blue-500 font-bold tracking-widest text-xs uppercase mt-1">Cloud Edition V5.7</p>
             </div>
             <div className={`${cardClass} border p-6 rounded-2xl space-y-6`}>
               <div className="space-y-2">
@@ -796,7 +797,7 @@ export default function App() {
                 {isHost && (
                     <button 
                        onClick={() => setIsPlacingMarker(!isPlacingMarker)}
-                       className={`p-2.5 rounded-xl shadow-lg transition-colors ${isPlacingMarker ? 'bg-blue-600 text-white' : (theme === 'light' ? 'bg-zinc-100 text-zinc-600' : 'bg-zinc-800 text-zinc-400')}`}
+                       className={`p-2 rounded-xl shadow-lg transition-colors ${isPlacingMarker ? 'bg-blue-600 text-white' : (theme === 'light' ? 'bg-zinc-100 text-zinc-600' : 'bg-zinc-800 text-zinc-400')}`}
                        title="Place Comment"
                     >
                        {isPlacingMarker ? <X size={18} /> : <Plus size={18} />}
@@ -805,7 +806,7 @@ export default function App() {
 
                 <button 
                    onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')}
-                   className={`p-2.5 rounded-xl shadow-lg transition-colors ${theme === 'light' ? 'bg-zinc-100 text-zinc-600' : 'bg-zinc-800 text-zinc-400'}`}
+                   className={`p-2 rounded-xl shadow-lg transition-colors ${theme === 'light' ? 'bg-zinc-100 text-zinc-600' : 'bg-zinc-800 text-zinc-400'}`}
                    title="Toggle Theme"
                 >
                    {theme === 'light' ? <Moon size={18} /> : <Sun size={18} />}
@@ -813,13 +814,13 @@ export default function App() {
 
                 <button 
                    onClick={() => setIsUiLocked(true)}
-                   className={`p-2.5 rounded-xl shadow-lg transition-colors ${theme === 'light' ? 'bg-zinc-100 text-zinc-600' : 'bg-zinc-800 text-zinc-400'}`}
+                   className={`p-2 rounded-xl shadow-lg transition-colors ${theme === 'light' ? 'bg-zinc-100 text-zinc-600' : 'bg-zinc-800 text-zinc-400'}`}
                    title="Lock Screen"
                 >
                    <Shield size={18} />
                 </button>
 
-                <button onClick={() => { setIsLocked(!isLocked); setSelectedUser(null); }} className={`p-2.5 rounded-xl shadow-lg transition-colors ${isLocked ? 'bg-blue-600 text-white' : (theme === 'light' ? 'bg-zinc-100 text-zinc-600' : 'bg-zinc-800 text-zinc-500')}`} title="Map Lock">
+                <button onClick={() => { setIsLocked(!isLocked); setSelectedUser(null); }} className={`p-2 rounded-xl shadow-lg transition-colors ${isLocked ? 'bg-blue-600 text-white' : (theme === 'light' ? 'bg-zinc-100 text-zinc-600' : 'bg-zinc-800 text-zinc-500')}`} title="Map Lock">
                     {isLocked ? <Lock size={18} /> : <Unlock size={18} />}
                 </button>
                 
@@ -827,7 +828,7 @@ export default function App() {
                     setIsLocked(true); 
                     setSelectedUser(null); 
                     setFocusTrigger(prev => prev + 1);
-                }} className={`p-2.5 rounded-xl shadow-lg transition-colors ${theme === 'light' ? 'bg-zinc-100 text-zinc-900' : 'bg-zinc-800 text-white'}`} title="Locate Me">
+                }} className={`p-2 rounded-xl shadow-lg transition-colors ${theme === 'light' ? 'bg-zinc-100 text-zinc-900' : 'bg-zinc-800 text-white'}`} title="Locate Me">
                     <Locate size={18} />
                 </button>
             </div>
