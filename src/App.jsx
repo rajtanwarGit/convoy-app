@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { 
   Navigation, Crown, Zap, Share2, LogOut, ArrowRight, 
-  Locate, AlertTriangle, Trash2, Settings, Lock, Unlock, X, Eraser, BatteryCharging, Shield, ShieldCheck, ChevronRight, Sun, Moon, MapPin, MessageSquare, Plus
+  Locate, AlertTriangle, Trash2, Settings, Lock, Unlock, X, Eraser, BatteryCharging, Shield, ShieldCheck, ChevronRight, Sun, Moon, MapPin, MessageSquare, Edit2, Plus, Check
 } from 'lucide-react';
 
 // --- FIREBASE IMPORTS ---
@@ -13,14 +13,19 @@ import {
 import { getAuth, signInAnonymously } from "firebase/auth";
 
 /**
- * CONVOY WEB APP - CLOUD EDITION (V5.5 - Stable Features)
+ * CONVOY WEB APP - CLOUD EDITION (V5.6 - Critical Fixes)
  * * Features:
- * 1. Real-time Cloud Sync & Ghost Mode.
+ * 1. Real-time Cloud Sync.
  * 2. Realistic Simulation.
- * 3. Smart GPS Throttling & Accuracy Filter.
- * 4. Slide-to-Unlock UI.
- * 5. Sun/Light Mode (Stable switching).
- * 6. Leader Markers (Add/Edit/Delete comments on map).
+ * 3. Non-blocking Distance HUD.
+ * 4. Room Validation & Auto-Cleanup.
+ * 5. Smart GPS Throttling.
+ * 6. Slide-to-Unlock UI.
+ * 7. GPS Accuracy Filter.
+ * 8. Ghost Mode.
+ * 9. Smooth Sun/Light Mode Toggle.
+ * 10. Leader Markers.
+ * 11. FIX: Removed illegal hook usage causing crash.
  */
 
 // --- CONFIGURATION ---
@@ -163,7 +168,7 @@ const GameMap = ({
   const mapInstanceRef = useRef(null);
   const layersRef = useRef({ markers: {}, customMarkers: {}, trailGroup: null, tileLayer: null }); 
   
-  // Refs for fresh callbacks
+  // Refs to ensure listeners always see fresh props
   const onMapClickRef = useRef(onMapClick);
   const onMapMoveRef = useRef(onMapMove);
 
@@ -192,7 +197,6 @@ const GameMap = ({
     });
 
     map.on('click', (e) => {
-        // Only trigger if placing marker
         if (onMapClickRef.current) onMapClickRef.current(e.latlng);
     });
 
@@ -214,7 +218,7 @@ const GameMap = ({
 
   }, [theme]);
 
-  // 3. Cursor Change
+  // 3. Cursor Change for Placing Marker
   useEffect(() => {
     if (mapRef.current) {
         mapRef.current.style.cursor = isPlacingMarker ? 'crosshair' : 'grab';
@@ -303,7 +307,7 @@ const GameMap = ({
       }
     });
 
-    // --- MARKERS (COMMENTS) ---
+    // --- CUSTOM MARKERS (COMMENTS) ---
     markers.forEach(m => {
         const html = `
             <div style="display: flex; flex-direction: column; align-items: center;">
@@ -631,7 +635,7 @@ export default function App() {
           <div className="max-w-md mx-auto w-full space-y-6">
             <div className="text-center">
               <h1 className="text-4xl font-black tracking-tight">CONVOY</h1>
-              <p className="text-blue-500 font-bold tracking-widest text-xs uppercase mt-1">Cloud Edition V5.5</p>
+              <p className="text-blue-500 font-bold tracking-widest text-xs uppercase mt-1">Cloud Edition V5.6</p>
             </div>
             <div className={`${cardClass} border p-6 rounded-2xl space-y-6`}>
               <div className="space-y-2">
@@ -830,14 +834,7 @@ export default function App() {
           </div>
           
           <div className="flex gap-2 overflow-x-auto pb-1 mt-4 scrollbar-hide">
-             {useMemo(() => {
-                 if (!participants.find(p => p.isLeader)) return participants;
-                 const leader = participants.find(p => p.isLeader);
-                 const others = participants.filter(p => !p.isLeader).sort((a, b) => {
-                    return getDistanceKm(leader.lat, leader.lng, a.lat, a.lng) - getDistanceKm(leader.lat, leader.lng, b.lat, b.lng);
-                 });
-                 return [leader, ...others];
-             }, [participants]).map(p => {
+             {sortedParticipants.map(p => {
                 const ghost = isGhost(p.lastActive);
                 return (
                 <div key={p.id} className={`flex-shrink-0 border rounded-lg p-2 px-3 flex items-center gap-2 active:scale-95 transition-transform ${theme === 'light' ? 'bg-white border-zinc-200' : 'bg-zinc-950 border-zinc-800'}`} onClick={() => handleMarkerClick(p)}>
