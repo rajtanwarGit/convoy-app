@@ -1,31 +1,30 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { 
   Navigation, Crown, Zap, Share2, LogOut, ArrowRight, 
-  Locate, AlertTriangle, Trash2, Settings, Lock, Unlock, X, Eraser, BatteryCharging, Shield, ShieldCheck, ChevronRight
+  Locate, AlertTriangle, Trash2, Settings, Lock, Unlock, X, Eraser, BatteryCharging, Shield, ShieldCheck, ChevronRight, Sun, Moon, MapPin, MessageSquare, Plus
 } from 'lucide-react';
 
 // --- FIREBASE IMPORTS ---
 import { initializeApp } from "firebase/app";
 import { 
   getFirestore, doc, setDoc, onSnapshot, updateDoc, 
-  collection, deleteDoc, serverTimestamp, getDocs, writeBatch, arrayUnion 
+  collection, deleteDoc, serverTimestamp, getDocs, writeBatch, arrayUnion, addDoc 
 } from "firebase/firestore";
 import { getAuth, signInAnonymously } from "firebase/auth";
 
 /**
- * CONVOY WEB APP - CLOUD EDITION (V4.6 - Ghost Mode)
+ * CONVOY WEB APP - CLOUD EDITION (V5.5 - Stable Features)
  * * Features:
- * 1. Real-time Cloud Sync.
+ * 1. Real-time Cloud Sync & Ghost Mode.
  * 2. Realistic Simulation.
- * 3. Non-blocking Distance HUD.
- * 4. Room Validation & Auto-Cleanup.
- * 5. Smart GPS Throttling.
- * 6. Slide-to-Unlock UI.
- * 7. GPS Accuracy Filter.
- * 8. Ghost Mode (>5min inactivity detection).
+ * 3. Smart GPS Throttling & Accuracy Filter.
+ * 4. Slide-to-Unlock UI.
+ * 5. Sun/Light Mode (Stable switching).
+ * 6. Leader Markers (Add/Edit/Delete comments on map).
  */
 
 // --- CONFIGURATION ---
+// ⚠️ PASTE YOUR FIREBASE KEYS HERE
 const firebaseConfig = {
   apiKey: "AIzaSyBh8K4oKBaGwAQSJJ016jYkrMgl92x3Lr8",
   authDomain: "convoy-radar.firebaseapp.com",
@@ -67,9 +66,8 @@ const getDistanceKm = (lat1, lon1, lat2, lon2) => {
 const isGhost = (lastActiveTimestamp) => {
   if (!lastActiveTimestamp) return false;
   const now = Date.now();
-  // Handle Firestore Timestamp vs Date object vs Number
   const lastActive = lastActiveTimestamp.toMillis ? lastActiveTimestamp.toMillis() : new Date(lastActiveTimestamp).getTime();
-  return (now - lastActive) > (5 * 60 * 1000); // 5 minutes in ms
+  return (now - lastActive) > (5 * 60 * 1000); 
 };
 
 const CAR_COLORS = [
@@ -86,7 +84,7 @@ const CAR_COLORS = [
 ];
 
 // --- SWIPE TO UNLOCK COMPONENT ---
-const SwipeToUnlock = ({ onUnlock }) => {
+const SwipeToUnlock = ({ onUnlock, theme }) => {
   const [dragX, setDragX] = useState(0);
   const [isDragging, setIsDragging] = useState(false);
   const containerRef = useRef(null);
@@ -137,14 +135,14 @@ const SwipeToUnlock = ({ onUnlock }) => {
   }, [isDragging, dragX]);
 
   return (
-    <div ref={containerRef} className="relative w-72 h-14 bg-zinc-900 border border-zinc-700 rounded-full shadow-2xl overflow-hidden flex items-center select-none">
+    <div ref={containerRef} className={`relative w-72 h-14 ${theme === 'light' ? 'bg-zinc-200 border-zinc-300' : 'bg-zinc-900 border-zinc-700'} border rounded-full shadow-2xl overflow-hidden flex items-center select-none`}>
       <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-0 opacity-50">
-        <div className="text-zinc-400 text-xs font-bold tracking-[0.2em] uppercase animate-pulse flex items-center gap-2">
+        <div className={`${theme === 'light' ? 'text-zinc-600' : 'text-zinc-400'} text-xs font-bold tracking-[0.2em] uppercase animate-pulse flex items-center gap-2`}>
            Slide to Unlock <ChevronRight size={14} />
         </div>
       </div>
       <div 
-        className="absolute left-1 w-12 h-12 bg-white rounded-full shadow-lg flex items-center justify-center z-10 cursor-grab active:cursor-grabbing"
+        className={`absolute left-1 w-12 h-12 ${theme === 'light' ? 'bg-white shadow-zinc-400' : 'bg-white shadow-lg'} rounded-full flex items-center justify-center z-10 cursor-grab active:cursor-grabbing`}
         style={{ transform: `translateX(${dragX}px)`, transition: isDragging ? 'none' : 'transform 0.3s cubic-bezier(0.18, 0.89, 0.32, 1.28)' }}
         onMouseDown={handleStart}
         onTouchStart={handleStart}
@@ -156,11 +154,25 @@ const SwipeToUnlock = ({ onUnlock }) => {
 };
 
 // --- MAP COMPONENT ---
-const GameMap = ({ myPos, participants, leaderPath, isLeafletLoaded, onMarkerClick, selectedUser, isLocked, onMapMove, focusTrigger }) => {
+const GameMap = ({ 
+  myPos, participants, leaderPath, markers, isLeafletLoaded, 
+  onMarkerClick, onCustomMarkerClick, onMapClick, 
+  selectedUser, isLocked, onMapMove, focusTrigger, theme, isPlacingMarker 
+}) => {
   const mapRef = useRef(null);
   const mapInstanceRef = useRef(null);
-  const layersRef = useRef({ markers: {}, trailGroup: null }); 
+  const layersRef = useRef({ markers: {}, customMarkers: {}, trailGroup: null, tileLayer: null }); 
+  
+  // Refs for fresh callbacks
+  const onMapClickRef = useRef(onMapClick);
+  const onMapMoveRef = useRef(onMapMove);
 
+  useEffect(() => {
+    onMapClickRef.current = onMapClick;
+    onMapMoveRef.current = onMapMove;
+  }, [onMapClick, onMapMove]);
+
+  // 1. Init Map
   useEffect(() => {
     if (!isLeafletLoaded || !mapRef.current || mapInstanceRef.current || !window.L) return;
 
@@ -170,12 +182,18 @@ const GameMap = ({ myPos, participants, leaderPath, isLeafletLoaded, onMarkerCli
       zoomSnap: 0.1,
     }).setView([myPos.lat, myPos.lng], 15);
 
-    window.L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+    // Initial Tile Layer
+    layersRef.current.tileLayer = window.L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
       maxZoom: 20
     }).addTo(map);
 
     map.on('dragstart', () => {
-      onMapMove();
+      if (onMapMoveRef.current) onMapMoveRef.current();
+    });
+
+    map.on('click', (e) => {
+        // Only trigger if placing marker
+        if (onMapClickRef.current) onMapClickRef.current(e.latlng);
     });
 
     layersRef.current.trailGroup = window.L.layerGroup().addTo(map);
@@ -183,16 +201,39 @@ const GameMap = ({ myPos, participants, leaderPath, isLeafletLoaded, onMarkerCli
     mapInstanceRef.current = map;
   }, [isLeafletLoaded]);
 
+  // 2. Handle Theme Change (Safe Tile Swap)
+  useEffect(() => {
+    if (!mapInstanceRef.current || !layersRef.current.tileLayer || !window.L) return;
+    
+    const tileUrl = theme === 'light' 
+        ? 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png'
+        : 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png';
+
+    // Efficiently swap URL without destroying layer to prevent blinking/blank map
+    layersRef.current.tileLayer.setUrl(tileUrl);
+
+  }, [theme]);
+
+  // 3. Cursor Change
+  useEffect(() => {
+    if (mapRef.current) {
+        mapRef.current.style.cursor = isPlacingMarker ? 'crosshair' : 'grab';
+    }
+  }, [isPlacingMarker]);
+
+  // 4. Update Visuals
   useEffect(() => {
     if (!mapInstanceRef.current || !window.L) return;
     const map = mapInstanceRef.current;
     const layers = layersRef.current;
 
+    // --- TRAILS ---
     if (layers.trailGroup) {
       layers.trailGroup.clearLayers(); 
-      
       if (leaderPath && leaderPath.length > 1) {
         let currentSegment = [leaderPath[0]];
+        const trailColor = theme === 'light' ? '#9333ea' : '#a855f7'; 
+
         for (let i = 1; i < leaderPath.length; i++) {
           const prev = leaderPath[i-1];
           const curr = leaderPath[i];
@@ -200,13 +241,7 @@ const GameMap = ({ myPos, participants, leaderPath, isLeafletLoaded, onMarkerCli
 
           if (dist > 1.0) {
              if (currentSegment.length > 1) {
-               window.L.polyline(currentSegment, {
-                 color: '#a855f7',
-                 weight: 4,
-                 opacity: 0.8,
-                 dashArray: '5, 10',
-                 lineCap: 'round'
-               }).addTo(layers.trailGroup);
+               window.L.polyline(currentSegment, { color: trailColor, weight: 4, opacity: 0.8, dashArray: '5, 10', lineCap: 'round' }).addTo(layers.trailGroup);
              }
              currentSegment = [curr];
           } else {
@@ -214,48 +249,40 @@ const GameMap = ({ myPos, participants, leaderPath, isLeafletLoaded, onMarkerCli
           }
         }
         if (currentSegment.length > 1) {
-           window.L.polyline(currentSegment, {
-             color: '#a855f7',
-             weight: 4,
-             opacity: 0.8,
-             dashArray: '5, 10',
-             lineCap: 'round'
-           }).addTo(layers.trailGroup);
+           window.L.polyline(currentSegment, { color: trailColor, weight: 4, opacity: 0.8, dashArray: '5, 10', lineCap: 'round' }).addTo(layers.trailGroup);
         }
       }
     }
 
+    // --- CARS ---
     participants.forEach(p => {
       if (!p.lat || !p.lng) return;
-
-      // Check Ghost Status
       const ghost = isGhost(p.lastActive);
-      const markerColor = ghost ? '#71717a' : p.color; // Zinc-500 for ghost
-      const shadowColor = ghost ? 'transparent' : p.color;
-      const opacity = ghost ? 0.6 : 1.0;
+      const markerColor = ghost ? '#71717a' : p.color; 
       const borderColor = ghost ? '#a1a1aa' : 'white';
+      const textColor = theme === 'light' && !ghost ? '#000' : p.color;
+      const textShadow = theme === 'light' ? '0 0 2px white' : '0 1px 2px black';
 
       const html = `
-          <div style="display: flex; flex-direction: column; align-items: center; opacity: ${opacity}; transition: opacity 0.5s;">
+          <div style="display: flex; flex-direction: column; align-items: center; opacity: ${ghost ? 0.6 : 1}; transition: opacity 0.5s;">
             <div style="
               width: ${p.isLeader ? '24px' : '18px'};
               height: ${p.isLeader ? '24px' : '18px'};
               background-color: ${markerColor};
               border: 2px solid ${borderColor};
-              box-shadow: 0 0 15px ${shadowColor};
+              box-shadow: 0 0 15px ${ghost ? 'transparent' : markerColor};
               transform: rotate(45deg);
               margin-bottom: 4px;
-              transition: background-color 0.5s;
             "></div>
             <span style="
               font-family: sans-serif; font-size: 10px; font-weight: bold;
-              color: ${ghost ? '#a1a1aa' : p.color}; 
-              text-shadow: 0 1px 2px black;
-              background: rgba(0,0,0,0.8); padding: 2px 6px; border-radius: 4px;
+              color: ${ghost ? '#a1a1aa' : textColor}; 
+              text-shadow: ${textShadow};
+              background: ${theme === 'light' ? 'rgba(255,255,255,0.7)' : 'rgba(0,0,0,0.7)'}; 
+              padding: 2px 6px; border-radius: 4px;
             ">${p.name} ${ghost ? '?' : ''}</span>
           </div>
         `;
-        
       const icon = window.L.divIcon({ className: '', html, iconSize: [40, 40], iconAnchor: [20, 20] });
 
       if (!layers.markers[p.id]) {
@@ -265,7 +292,7 @@ const GameMap = ({ myPos, participants, leaderPath, isLeafletLoaded, onMarkerCli
       } else {
         const marker = layers.markers[p.id];
         marker.setLatLng([p.lat, p.lng]);
-        marker.setIcon(icon); // Update icon to reflect Ghost changes
+        marker.setIcon(icon);
       }
     });
 
@@ -275,39 +302,60 @@ const GameMap = ({ myPos, participants, leaderPath, isLeafletLoaded, onMarkerCli
         delete layers.markers[id];
       }
     });
-  }, [participants, leaderPath, onMarkerClick]);
 
+    // --- MARKERS (COMMENTS) ---
+    markers.forEach(m => {
+        const html = `
+            <div style="display: flex; flex-direction: column; align-items: center;">
+               <div style="background-color: #ef4444; color: white; padding: 4px; border-radius: 50%; border: 2px solid white; box-shadow: 0 2px 5px rgba(0,0,0,0.5);">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s-8-4.5-8-11.8A8 8 0 0 1 12 2a8 8 0 0 1 8 8.2c0 7.3-8 11.8-8 11.8z"/><circle cx="12" cy="10" r="3"/></svg>
+               </div>
+               <div style="background: ${theme === 'light' ? 'white' : '#18181b'}; color: ${theme === 'light' ? 'black' : 'white'}; padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: bold; margin-top: 2px; border: 1px solid #ef4444; max-width: 100px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
+                  ${m.text}
+               </div>
+            </div>
+        `;
+        const icon = window.L.divIcon({ className: '', html, iconSize: [30, 50], iconAnchor: [15, 25] });
+
+        if (!layers.customMarkers[m.id]) {
+            const marker = window.L.marker([m.lat, m.lng], { icon }).addTo(map);
+            marker.on('click', () => onCustomMarkerClick(m));
+            layers.customMarkers[m.id] = marker;
+        } else {
+            layers.customMarkers[m.id].setIcon(icon);
+        }
+    });
+
+    Object.keys(layers.customMarkers).forEach(id => {
+        if (!markers.find(m => m.id === id)) {
+            layers.customMarkers[id].remove();
+            delete layers.customMarkers[id];
+        }
+    });
+
+  }, [participants, leaderPath, onMarkerClick, markers, theme]);
+
+  // Camera
   useEffect(() => {
     if (!mapInstanceRef.current || !window.L || !selectedUser) return;
     const map = mapInstanceRef.current;
-    const bounds = window.L.latLngBounds([
-        [myPos.lat, myPos.lng],
-        [selectedUser.lat, selectedUser.lng]
-    ]);
-    
-    map.fitBounds(bounds, { 
-      paddingTopLeft: [40, 180], 
-      paddingBottomRight: [40, 220], 
-      animate: true 
-    });
+    const bounds = window.L.latLngBounds([[myPos.lat, myPos.lng], [selectedUser.lat, selectedUser.lng]]);
+    map.fitBounds(bounds, { paddingTopLeft: [40, 180], paddingBottomRight: [40, 220], animate: true });
   }, [selectedUser]); 
 
-  // Handle Auto-Follow Me
   useEffect(() => {
     if (!mapInstanceRef.current || !window.L || !isLocked || selectedUser) return;
     const map = mapInstanceRef.current;
-    const mapCenter = [myPos.lat, myPos.lng];
-    map.panTo(mapCenter, { animate: true, duration: 1.0 });
+    map.panTo([myPos.lat, myPos.lng], { animate: true, duration: 1.0 });
   }, [myPos, selectedUser, isLocked]);
 
-  // Handle Focus Trigger (Locate Button Click)
   useEffect(() => {
     if (!mapInstanceRef.current || !window.L || focusTrigger === 0) return;
     const map = mapInstanceRef.current;
     map.flyTo([myPos.lat, myPos.lng], 18, { animate: true, duration: 1.5 });
   }, [focusTrigger]);
 
-  return <div ref={mapRef} className="w-full h-full bg-zinc-950" />;
+  return <div ref={mapRef} className={`w-full h-full ${theme === 'light' ? 'bg-zinc-200' : 'bg-zinc-950'}`} />;
 };
 
 // --- MAIN APP ---
@@ -321,13 +369,19 @@ export default function App() {
   const [isLocked, setIsLocked] = useState(true); 
   const [focusTrigger, setFocusTrigger] = useState(0);
   const [isUiLocked, setIsUiLocked] = useState(false);
+  const [theme, setTheme] = useState('dark'); 
   
+  // Marker State
+  const [markers, setMarkers] = useState([]);
+  const [isPlacingMarker, setIsPlacingMarker] = useState(false);
+  const [markerModal, setMarkerModal] = useState(null); 
+
+  // Simulation & GPS
   const [isSimulating, setIsSimulating] = useState(false);
   const [simStartCity, setSimStartCity] = useState('Jaipur');
   const [simEndCity, setSimEndCity] = useState('Sikar');
   const [simRoute, setSimRoute] = useState([]); 
   const [simIndex, setSimIndex] = useState(0);
-
   const [myPos, setMyPos] = useState({ lat: 26.9124, lng: 75.7873 });
   const [participants, setParticipants] = useState([]);
   const [statusMsg, setStatusMsg] = useState('');
@@ -353,32 +407,22 @@ export default function App() {
       const startRes = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${start}`);
       const startData = await startRes.json();
       if (!startData[0]) throw new Error("Start city not found");
-
       const endRes = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${end}`);
       const endData = await endRes.json();
       if (!endData[0]) throw new Error("End city not found");
-
       const routeRes = await fetch(`https://router.project-osrm.org/route/v1/driving/${startData[0].lon},${startData[0].lat};${endData[0].lon},${endData[0].lat}?overview=full&geometries=geojson`);
       const routeJson = await routeRes.json();
-      
       if (routeJson.routes && routeJson.routes[0]) {
         const coords = routeJson.routes[0].geometry.coordinates.map(c => ({ lat: c[1], lng: c[0] }));
-        setSimRoute(coords);
-        setMyPos(coords[0]);
-        return true;
+        setSimRoute(coords); setMyPos(coords[0]); return true;
       }
-    } catch (e) {
-      alert("Simulation Error: " + e.message);
-      return false;
-    }
+    } catch (e) { alert("Simulation Error: " + e.message); return false; }
     return false;
   };
 
   const joinRoom = async (code, host = false) => {
     if (!userName) return alert("Name required!");
     if (!db) return alert("Firebase not configured!");
-    
-    // Reset path tracker
     if (host) lastPathPointRef.current = null;
     lastUploadRef.current = 0;
     lastUploadedPosRef.current = null;
@@ -387,13 +431,8 @@ export default function App() {
     const snapshot = await getDocs(usersRef);
     const takenColors = snapshot.docs.map(doc => doc.data().color);
     
-    if (!host && snapshot.empty) {
-      return alert("Room not found! Please check the code or host a new one.");
-    }
-
-    if (snapshot.size >= 10) {
-      return alert("Room is full! (Max 10 users)");
-    }
+    if (!host && snapshot.empty) return alert("Room not found!");
+    if (snapshot.size >= 10) return alert("Room is full!");
 
     let finalColor = userColor;
     if (takenColors.includes(userColor)) {
@@ -411,16 +450,9 @@ export default function App() {
       if (!success) setIsSimulating(false); 
     }
 
-    const userRef = doc(db, `sessions/${code}/users/${userId}`);
-    await setDoc(userRef, {
-      id: userId,
-      name: userName,
-      color: finalColor,
-      isLeader: host,
-      lat: myPos.lat,
-      lng: myPos.lng,
-      lastActive: serverTimestamp(),
-      path: host ? [] : null
+    await setDoc(doc(db, `sessions/${code}/users/${userId}`), {
+      id: userId, name: userName, color: finalColor, isLeader: host,
+      lat: myPos.lat, lng: myPos.lng, lastActive: serverTimestamp(), path: host ? [] : null
     });
 
     onSnapshot(usersRef, (snapshot) => {
@@ -428,50 +460,83 @@ export default function App() {
       snapshot.forEach(doc => activeUsers.push(doc.data()));
       setParticipants(activeUsers);
     });
+
+    onSnapshot(collection(db, `sessions/${code}/markers`), (snapshot) => {
+        const ms = [];
+        snapshot.forEach(doc => ms.push({ id: doc.id, ...doc.data() }));
+        setMarkers(ms);
+    });
   };
 
   const leaveSession = async () => {
     if (!db) return;
-
-    if (isHost) {
-      if (!window.confirm("Close Session? This will delete all trip data.")) return;
-    }
-
+    if (isHost && !window.confirm("Close Session?")) return;
     try {
       await deleteDoc(doc(db, `sessions/${sessionCode}/users/${userId}`));
       const remainingSnapshot = await getDocs(collection(db, `sessions/${sessionCode}/users`));
-
       if (isHost || remainingSnapshot.empty) {
         const batch = writeBatch(db);
         remainingSnapshot.forEach(doc => batch.delete(doc.ref));
+        const markersSnapshot = await getDocs(collection(db, `sessions/${sessionCode}/markers`));
+        markersSnapshot.forEach(doc => batch.delete(doc.ref));
         batch.delete(doc(db, "sessions", sessionCode));
         await batch.commit();
       }
-    } catch (e) {
-      console.error("Cleanup error:", e);
-    }
-
+    } catch (e) { console.error("Cleanup error:", e); }
     window.location.reload();
   };
 
   const clearTrail = async () => {
     if (!db || !isHost) return;
-    if (window.confirm("Clear the recorded path trail? This helps if you took a wrong turn.")) {
+    if (window.confirm("Clear the recorded path trail?")) {
        try {
-         await updateDoc(doc(db, `sessions/${sessionCode}/users/${userId}`), {
-           path: [] 
-         });
+         await updateDoc(doc(db, `sessions/${sessionCode}/users/${userId}`), { path: [] });
          lastPathPointRef.current = null;
-       } catch (e) {
-         console.error("Error clearing trail", e);
-       }
+       } catch (e) { console.error("Error clearing trail", e); }
     }
   };
 
+  const handleMapClick = (latlng) => {
+      if (isPlacingMarker) {
+          setMarkerModal({ isOpen: true, lat: latlng.lat, lng: latlng.lng, mode: 'create', text: '' });
+          setIsPlacingMarker(false);
+      }
+  };
+
+  const handleCustomMarkerClick = (marker) => {
+      setMarkerModal({ 
+          isOpen: true, mode: isHost ? 'edit' : 'view', 
+          id: marker.id, text: marker.text, lat: marker.lat, lng: marker.lng 
+      });
+  };
+
+  const saveMarker = async () => {
+      if (!db || !markerModal.text) return;
+      try {
+          if (markerModal.mode === 'create') {
+              await addDoc(collection(db, `sessions/${sessionCode}/markers`), {
+                  lat: markerModal.lat, lng: markerModal.lng,
+                  text: markerModal.text, timestamp: serverTimestamp()
+              });
+          } else if (markerModal.mode === 'edit') {
+              await updateDoc(doc(db, `sessions/${sessionCode}/markers/${markerModal.id}`), { text: markerModal.text });
+          }
+          setMarkerModal(null);
+      } catch (e) { console.error("Marker Error", e); }
+  };
+
+  const deleteMarker = async () => {
+      if (!db || !markerModal.id) return;
+      if (window.confirm("Delete this marker?")) {
+          await deleteDoc(doc(db, `sessions/${sessionCode}/markers/${markerModal.id}`));
+          setMarkerModal(null);
+      }
+  };
+
+  // GPS/SIM ENGINE
   useEffect(() => {
     if (step !== 'map' || !db) return;
-    let watchId;
-    let simInterval;
+    let watchId, simInterval;
 
     if (isSimulating && isHost && simRoute.length > 0) {
       simInterval = setInterval(() => {
@@ -480,28 +545,20 @@ export default function App() {
           if (nextIndex >= simRoute.length) { clearInterval(simInterval); return prev; }
           const nextPos = simRoute[nextIndex];
           setMyPos(nextPos);
-          
-          const payload = {
-            lat: nextPos.lat, lng: nextPos.lng,
-            lastActive: serverTimestamp()
-          };
-
+          const payload = { lat: nextPos.lat, lng: nextPos.lng, lastActive: serverTimestamp() };
           const lastPoint = lastPathPointRef.current;
           const dist = lastPoint ? getDistanceKm(lastPoint.lat, lastPoint.lng, nextPos.lat, nextPos.lng) : 100;
-          
           if (dist > 0.03) {
              payload.path = arrayUnion({lat: nextPos.lat, lng: nextPos.lng});
              lastPathPointRef.current = nextPos;
           }
-
           updateDoc(doc(db, `sessions/${sessionCode}/users/${userId}`), payload).catch(() => {});
-
+          
           const lag1 = Math.max(0, nextIndex - 15);
           const pos1 = simRoute[lag1];
           if (pos1 && nextIndex > 15) {
              setDoc(doc(db, `sessions/${sessionCode}/users/bot_viper`), {
-                id: 'bot_viper', name: 'Viper (AI)', color: '#ec4899', isLeader: false,
-                lat: pos1.lat, lng: pos1.lng, lastActive: serverTimestamp()
+                id: 'bot_viper', name: 'Viper (AI)', color: '#ec4899', isLeader: false, lat: pos1.lat, lng: pos1.lng, lastActive: serverTimestamp()
              });
           }
           return nextIndex;
@@ -514,45 +571,29 @@ export default function App() {
           setMyPos({ lat: latitude, lng: longitude });
           const now = Date.now();
           const timeDiff = now - lastUploadRef.current;
-          const distMoved = lastUploadedPosRef.current 
-            ? getDistanceKm(lastUploadedPosRef.current.lat, lastUploadedPosRef.current.lng, latitude, longitude)
-            : 100;
-
+          const distMoved = lastUploadedPosRef.current ? getDistanceKm(lastUploadedPosRef.current.lat, lastUploadedPosRef.current.lng, latitude, longitude) : 100;
           let shouldUpload = false;
           const isMovingFast = speed && speed > 8; 
-
-          if (isMovingFast) {
-             if (timeDiff > 5000 || distMoved > 0.05) shouldUpload = true;
-          } else {
-             if (timeDiff > 10000 || distMoved > 0.03) shouldUpload = true;
-          }
-          
+          if (isMovingFast) { if (timeDiff > 5000 || distMoved > 0.05) shouldUpload = true; } 
+          else { if (timeDiff > 10000 || distMoved > 0.03) shouldUpload = true; }
           if (timeDiff > 60000) shouldUpload = true;
 
           if (shouldUpload) {
               const payload = { lat: latitude, lng: longitude, lastActive: serverTimestamp() };
-              
               if (isHost) {
                  const lastPathPoint = lastPathPointRef.current;
                  const distFromPath = lastPathPoint ? getDistanceKm(lastPathPoint.lat, lastPathPoint.lng, latitude, longitude) : 100;
-                 
-                 // FILTER: Only add to trail if accuracy is good (< 20m) AND moved enough (> 30m)
                  if (distFromPath > 0.03 && accuracy < 20) { 
                      payload.path = arrayUnion({ lat: latitude, lng: longitude });
                      lastPathPointRef.current = { lat: latitude, lng: longitude };
                  }
               }
-
-              updateDoc(doc(db, `sessions/${sessionCode}/users/${userId}`), payload)
-                .then(() => {
-                    lastUploadRef.current = now;
-                    lastUploadedPosRef.current = { lat: latitude, lng: longitude };
-                })
-                .catch(() => {});
+              updateDoc(doc(db, `sessions/${sessionCode}/users/${userId}`), payload).then(() => {
+                    lastUploadRef.current = now; lastUploadedPosRef.current = { lat: latitude, lng: longitude };
+              }).catch(() => {});
           }
         },
-        (err) => setStatusMsg("GPS Error: " + err.message),
-        { enableHighAccuracy: true, distanceFilter: 5 }
+        (err) => setStatusMsg("GPS Error: " + err.message), { enableHighAccuracy: true, distanceFilter: 5 }
       );
     }
     return () => { if (watchId) navigator.geolocation.clearWatch(watchId); if (simInterval) clearInterval(simInterval); };
@@ -578,45 +619,53 @@ export default function App() {
      return [leader, ...others];
   }, [participants, leader]);
 
+  // STYLES
+  const bgClass = theme === 'light' ? 'bg-zinc-100 text-zinc-900' : 'bg-zinc-950 text-white';
+  const cardClass = theme === 'light' ? 'bg-white border-zinc-200 shadow-xl' : 'bg-zinc-900 border-zinc-800 shadow-xl';
+  const textSub = theme === 'light' ? 'text-zinc-500' : 'text-zinc-400';
+
   if (step === 'login') {
     return (
-      <div className="fixed inset-0 bg-zinc-950 text-white overflow-y-auto">
+      <div className={`fixed inset-0 overflow-y-auto ${bgClass}`}>
         <div className="min-h-full flex flex-col justify-center p-6 pt-20">
           <div className="max-w-md mx-auto w-full space-y-6">
             <div className="text-center">
               <h1 className="text-4xl font-black tracking-tight">CONVOY</h1>
-              <p className="text-blue-500 font-bold tracking-widest text-xs uppercase mt-1">Cloud Edition V4.6</p>
+              <p className="text-blue-500 font-bold tracking-widest text-xs uppercase mt-1">Cloud Edition V5.5</p>
             </div>
-            <div className="bg-zinc-900 border border-zinc-800 p-6 rounded-2xl space-y-6">
+            <div className={`${cardClass} border p-6 rounded-2xl space-y-6`}>
               <div className="space-y-2">
-                <label className="text-xs font-bold text-zinc-500 uppercase">Callsign</label>
-                <input value={userName} onChange={e => setUserName(e.target.value)} placeholder="Maverick" className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-4 text-white font-bold outline-none focus:border-blue-600" />
+                <label className={`text-xs font-bold ${textSub} uppercase`}>Callsign</label>
+                <input value={userName} onChange={e => setUserName(e.target.value)} placeholder="Maverick" className={`w-full ${theme === 'light' ? 'bg-zinc-50 border-zinc-300' : 'bg-zinc-950 border-zinc-800'} border rounded-xl p-4 font-bold outline-none focus:border-blue-600`} />
               </div>
               <div className="grid grid-cols-5 gap-2">
                 {CAR_COLORS.map(c => (
-                  <button key={c.hex} onClick={() => setUserColor(c.hex)} className={`h-10 rounded-lg transition-all ${userColor === c.hex ? 'ring-2 ring-white scale-110' : 'opacity-50 hover:opacity-80'}`} style={{ backgroundColor: c.hex }} />
+                  <button key={c.hex} onClick={() => setUserColor(c.hex)} className={`h-10 rounded-lg transition-all ${userColor === c.hex ? 'ring-2 ring-blue-500 scale-110' : 'opacity-50 hover:opacity-80'}`} style={{ backgroundColor: c.hex }} />
                 ))}
               </div>
-              
               <div className="grid grid-cols-1 gap-3 pt-2">
                 <button onClick={() => joinRoom(generateSessionId(), true)} className="bg-blue-600 hover:bg-blue-500 text-white p-4 rounded-xl font-bold flex justify-center gap-2"><Zap size={20} /> HOST ROOM</button>
                 <div className="flex gap-2">
-                  <input value={sessionCode} onChange={e => setSessionCode(e.target.value.toUpperCase())} placeholder="CODE" className="bg-zinc-950 border border-zinc-800 rounded-xl p-4 text-center text-white outline-none w-full font-mono uppercase" />
-                  <button onClick={() => joinRoom(sessionCode, false)} className="bg-zinc-800 text-white p-4 rounded-xl"><ArrowRight size={24} /></button>
+                  <input value={sessionCode} onChange={e => setSessionCode(e.target.value.toUpperCase())} placeholder="CODE" className={`w-full ${theme === 'light' ? 'bg-zinc-50 border-zinc-300' : 'bg-zinc-950 border-zinc-800'} border rounded-xl p-4 text-center font-mono uppercase outline-none`} />
+                  <button onClick={() => joinRoom(sessionCode, false)} className={`${theme === 'light' ? 'bg-zinc-200 text-zinc-900' : 'bg-zinc-800 text-white'} p-4 rounded-xl`}><ArrowRight size={24} /></button>
                 </div>
               </div>
             </div>
+            
+            <div className="flex flex-col items-center gap-4">
+               <button onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')} className={`flex items-center gap-2 text-xs font-bold uppercase px-4 py-2 rounded-full border ${theme === 'light' ? 'bg-white border-zinc-300' : 'bg-zinc-900 border-zinc-700'}`}>
+                  {theme === 'light' ? <><Moon size={12}/> Dark Mode</> : <><Sun size={12}/> Light Mode</>}
+               </button>
 
-            <div className="flex flex-col items-center">
-               <button onClick={() => setIsSimulating(!isSimulating)} className="text-zinc-700 text-xs font-bold uppercase hover:text-zinc-500 transition-colors flex items-center gap-2">
+               <button onClick={() => setIsSimulating(!isSimulating)} className={`text-xs font-bold uppercase transition-colors flex items-center gap-2 ${textSub}`}>
                   <Settings size={12} /> {isSimulating ? 'Disable Simulation' : 'Enable Simulation'}
                </button>
                {isSimulating && (
-                  <div className="mt-4 w-full bg-zinc-900/50 border border-zinc-800 p-4 rounded-xl animate-in slide-in-from-bottom-2">
+                  <div className={`mt-2 w-full ${cardClass} border p-4 rounded-xl animate-in slide-in-from-bottom-2`}>
                       <div className="flex gap-2">
-                          <input value={simStartCity} onChange={e => setSimStartCity(e.target.value)} className="w-1/2 bg-zinc-800 rounded-lg p-2 text-xs text-white" placeholder="Start" />
-                          <ArrowRight size={16} className="text-zinc-600 mt-2" />
-                          <input value={simEndCity} onChange={e => setSimEndCity(e.target.value)} className="w-1/2 bg-zinc-800 rounded-lg p-2 text-xs text-white" placeholder="End" />
+                          <input value={simStartCity} onChange={e => setSimStartCity(e.target.value)} className={`w-1/2 rounded-lg p-2 text-xs ${theme === 'light' ? 'bg-zinc-100' : 'bg-zinc-800'}`} placeholder="Start" />
+                          <ArrowRight size={16} className={`${textSub} mt-2`} />
+                          <input value={simEndCity} onChange={e => setSimEndCity(e.target.value)} className={`w-1/2 rounded-lg p-2 text-xs ${theme === 'light' ? 'bg-zinc-100' : 'bg-zinc-800'}`} placeholder="End" />
                       </div>
                   </div>
                )}
@@ -628,72 +677,101 @@ export default function App() {
   }
 
   return (
-    <div className="h-[100dvh] w-full bg-zinc-950 flex flex-col relative overflow-hidden">
+    <div className={`h-[100dvh] w-full flex flex-col relative overflow-hidden ${bgClass}`}>
       <div className="absolute inset-0 z-0">
         <GameMap 
-          myPos={myPos} 
-          participants={participants} 
-          leaderPath={leaderPath} 
-          isLeafletLoaded={isLeafletLoaded} 
-          onMarkerClick={handleMarkerClick} 
-          selectedUser={selectedUser} 
-          isLocked={isLocked}
-          onMapMove={() => {
-            setIsLocked(false);
-            setSelectedUser(null);
-          }}
-          focusTrigger={focusTrigger}
+          myPos={myPos} participants={participants} leaderPath={leaderPath} markers={markers}
+          isLeafletLoaded={isLeafletLoaded} onMarkerClick={handleMarkerClick} 
+          onCustomMarkerClick={handleCustomMarkerClick} onMapClick={handleMapClick}
+          selectedUser={selectedUser} isLocked={isLocked} isPlacingMarker={isPlacingMarker}
+          onMapMove={() => { setIsLocked(false); setSelectedUser(null); }} focusTrigger={focusTrigger}
+          theme={theme}
         />
       </div>
 
-      {/* --- TOUCH BLOCKER OVERLAY --- */}
+      {markerModal && (
+         <div className="absolute inset-0 z-50 bg-black/60 backdrop-blur-sm flex flex-col items-center justify-center p-6 animate-in fade-in zoom-in duration-200">
+            <div className={`w-full max-w-sm ${cardClass} p-6 rounded-2xl`}>
+               <div className="flex justify-between items-center mb-4">
+                  <h3 className="font-bold text-lg flex items-center gap-2"><MessageSquare size={20} className="text-blue-500"/> {markerModal.mode === 'create' ? 'Add Note' : 'Note'}</h3>
+                  <button onClick={() => setMarkerModal(null)}><X size={20} className={textSub}/></button>
+               </div>
+               
+               {markerModal.mode === 'view' ? (
+                   <p className="text-lg font-medium p-2">{markerModal.text}</p>
+               ) : (
+                   <textarea 
+                      autoFocus
+                      value={markerModal.text}
+                      onChange={e => setMarkerModal({...markerModal, text: e.target.value})}
+                      placeholder="e.g. Bad Traffic, Pothole, Police..."
+                      className={`w-full h-24 rounded-xl p-3 ${theme === 'light' ? 'bg-zinc-100 text-black' : 'bg-zinc-800 text-white'} outline-none resize-none border-none`}
+                   />
+               )}
+
+               <div className="flex gap-2 mt-4">
+                  {markerModal.mode !== 'view' && (
+                      <button onClick={saveMarker} className="flex-1 bg-blue-600 hover:bg-blue-500 text-white py-3 rounded-xl font-bold">SAVE</button>
+                  )}
+                  {markerModal.mode === 'edit' && (
+                      <button onClick={deleteMarker} className="p-3 bg-red-500/10 text-red-500 rounded-xl"><Trash2 size={20}/></button>
+                  )}
+               </div>
+            </div>
+         </div>
+      )}
+
       {isUiLocked && (
         <div className="absolute inset-0 z-50 bg-black/60 backdrop-blur-md flex flex-col items-center justify-center animate-in fade-in duration-300">
            <div className="flex flex-col items-center gap-6 p-6">
               <div className="bg-zinc-800/50 p-4 rounded-full border border-white/10 shadow-2xl">
                  <ShieldCheck size={48} className="text-emerald-500" />
               </div>
-              <div className="text-center space-y-1">
-                <h2 className="text-2xl font-black text-white tracking-wider">UI LOCKED</h2>
+              <div className="text-center space-y-1 text-white">
+                <h2 className="text-2xl font-black tracking-wider">UI LOCKED</h2>
                 <p className="text-zinc-400 text-sm font-medium">Touch interactions disabled</p>
               </div>
-              
-              {/* Swipe Component */}
-              <SwipeToUnlock onUnlock={() => setIsUiLocked(false)} />
+              <SwipeToUnlock onUnlock={() => setIsUiLocked(false)} theme={theme} />
            </div>
         </div>
       )}
 
       <div className="absolute top-0 left-0 right-0 p-4 z-10 flex flex-col items-center pointer-events-none space-y-4">
         <div className="w-full flex justify-between pointer-events-auto">
-          <div className="bg-zinc-900/90 backdrop-blur border border-zinc-800 rounded-xl p-3 shadow-xl">
-            <span className="text-[10px] text-zinc-500 uppercase font-bold">Session</span>
+          <div className={`${cardClass} backdrop-blur-md border rounded-xl p-3 shadow-xl`}>
+            <span className={`text-[10px] ${textSub} uppercase font-bold`}>Session</span>
             <div className="flex items-center gap-2">
-              <span className="text-white font-mono font-bold text-xl">{sessionCode}</span>
-              <button onClick={() => navigator.clipboard.writeText(window.location.href)} className="text-zinc-500"><Share2 size={14} /></button>
+              <span className="font-mono font-bold text-xl">{sessionCode}</span>
+              <button onClick={() => navigator.clipboard.writeText(window.location.href)} className={textSub}><Share2 size={14} /></button>
             </div>
           </div>
           
           <div className="flex gap-2">
             {isHost && (
-              <button onClick={clearTrail} className="bg-zinc-800 text-amber-400 p-3 rounded-xl shadow-xl hover:bg-zinc-700 transition-colors">
+              <button onClick={clearTrail} className={`${theme === 'light' ? 'bg-white text-amber-600 border-zinc-200' : 'bg-zinc-800 text-amber-400 border-zinc-700'} border p-3 rounded-xl shadow-xl transition-colors`}>
                 <Eraser size={20} />
               </button>
             )}
-            <button onClick={leaveSession} className={`${isHost ? 'bg-red-600 text-white' : 'bg-zinc-800 text-red-400'} p-3 rounded-xl shadow-xl`}>
+            <button onClick={leaveSession} className={`${isHost ? 'bg-red-600 text-white' : (theme === 'light' ? 'bg-white text-red-500 border-zinc-200' : 'bg-zinc-800 text-red-400 border-zinc-700')} border p-3 rounded-xl shadow-xl`}>
                 {isHost ? <Trash2 size={20} /> : <LogOut size={20} />}
             </button>
           </div>
         </div>
 
+        {isPlacingMarker && (
+            <div className="bg-blue-600 text-white px-6 py-2 rounded-full font-bold shadow-xl animate-bounce pointer-events-none text-sm">
+                Tap map to place marker
+            </div>
+        )}
+
         {selectedUser && (
-          <div className="bg-zinc-900/95 backdrop-blur border border-zinc-700 p-4 rounded-2xl shadow-2xl flex items-center gap-4 pointer-events-auto animate-in slide-in-from-top-4 duration-300">
+          <div className={`${cardClass} backdrop-blur-md border p-4 rounded-2xl shadow-2xl flex items-center gap-4 pointer-events-auto animate-in slide-in-from-top-4 duration-300`}>
             <div style={{ backgroundColor: selectedUser.color }} className="w-1 h-10 rounded-full"></div>
             <div>
-              <div className="text-[10px] text-zinc-500 uppercase font-bold">Distance to {selectedUser.name}</div>
-              <div className="text-2xl font-mono font-black text-white">{selectedUser.distance}<span className="text-sm text-zinc-400 ml-1">km</span></div>
+              <div className={`text-[10px] ${textSub} uppercase font-bold`}>Distance to {selectedUser.name}</div>
+              <div className="text-2xl font-mono font-black">{selectedUser.distance}<span className={`text-sm ${textSub} ml-1`}>km</span></div>
             </div>
-            <button onClick={() => setSelectedUser(null)} className="ml-4 p-2 bg-zinc-800 rounded-full text-zinc-400 hover:text-white transition-colors">
+            <button onClick={() => setSelectedUser(null)} className={`ml-4 p-2 rounded-full ${theme === 'light' ? 'bg-zinc-100 text-zinc-500' : 'bg-zinc-800 text-zinc-400'} transition-colors`}>
               <X size={20} />
             </button>
           </div>
@@ -701,44 +779,70 @@ export default function App() {
       </div>
 
       <div className="absolute bottom-0 left-0 right-0 p-4 z-10 pointer-events-none">
-        <div className="bg-zinc-900/95 backdrop-blur border-t border-zinc-800 rounded-2xl p-4 shadow-2xl pointer-events-auto">
-          <div className="flex justify-between items-center mb-4">
-            <div>
-              <h3 className="text-white font-bold">{userName}</h3>
-              <p className="text-zinc-500 text-xs">
-                 {participants.length} Active • {isSimulating ? 'Simulation' : 'GPS Active'}
-                 {!isSimulating && <span className="text-green-500 ml-1 flex items-center inline-flex gap-1"><BatteryCharging size={10} /> Eco</span>}
+        <div className={`${cardClass} backdrop-blur-md border-t rounded-2xl p-4 shadow-2xl pointer-events-auto`}>
+          <div className="flex flex-row justify-between items-center gap-4">
+            <div className="min-w-0 flex-1 overflow-hidden">
+              <h3 className="font-bold truncate text-sm sm:text-base">{userName}</h3>
+              <p className={`${textSub} text-[10px] sm:text-xs truncate`}>
+                 {participants.length} Active • {isSimulating ? 'Sim' : 'GPS'}
+                 {!isSimulating && <span className="text-green-500 ml-1 inline-flex items-center gap-1"><BatteryCharging size={10} /> Eco</span>}
               </p>
             </div>
-            <div className="flex gap-2">
-                {/* --- UI LOCK BUTTON --- */}
+            <div className="flex flex-row gap-2 flex-shrink-0">
+                {isHost && (
+                    <button 
+                       onClick={() => setIsPlacingMarker(!isPlacingMarker)}
+                       className={`p-2.5 rounded-xl shadow-lg transition-colors ${isPlacingMarker ? 'bg-blue-600 text-white' : (theme === 'light' ? 'bg-zinc-100 text-zinc-600' : 'bg-zinc-800 text-zinc-400')}`}
+                       title="Place Comment"
+                    >
+                       {isPlacingMarker ? <X size={18} /> : <Plus size={18} />}
+                    </button>
+                )}
+
                 <button 
-                   onClick={() => setIsUiLocked(true)}
-                   className="p-3 rounded-xl shadow-lg bg-zinc-800 text-zinc-400 hover:text-white transition-colors"
-                   title="Lock Screen"
+                   onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')}
+                   className={`p-2.5 rounded-xl shadow-lg transition-colors ${theme === 'light' ? 'bg-zinc-100 text-zinc-600' : 'bg-zinc-800 text-zinc-400'}`}
+                   title="Toggle Theme"
                 >
-                   <Shield size={20} />
+                   {theme === 'light' ? <Moon size={18} /> : <Sun size={18} />}
                 </button>
 
-                <button onClick={() => { setIsLocked(!isLocked); setSelectedUser(null); }} className={`p-3 rounded-xl shadow-lg transition-colors ${isLocked ? 'bg-blue-600 text-white' : 'bg-zinc-800 text-zinc-500'}`}>
-                    {isLocked ? <Lock size={20} /> : <Unlock size={20} />}
+                <button 
+                   onClick={() => setIsUiLocked(true)}
+                   className={`p-2.5 rounded-xl shadow-lg transition-colors ${theme === 'light' ? 'bg-zinc-100 text-zinc-600' : 'bg-zinc-800 text-zinc-400'}`}
+                   title="Lock Screen"
+                >
+                   <Shield size={18} />
                 </button>
+
+                <button onClick={() => { setIsLocked(!isLocked); setSelectedUser(null); }} className={`p-2.5 rounded-xl shadow-lg transition-colors ${isLocked ? 'bg-blue-600 text-white' : (theme === 'light' ? 'bg-zinc-100 text-zinc-600' : 'bg-zinc-800 text-zinc-500')}`} title="Map Lock">
+                    {isLocked ? <Lock size={18} /> : <Unlock size={18} />}
+                </button>
+                
                 <button onClick={() => { 
                     setIsLocked(true); 
                     setSelectedUser(null); 
                     setFocusTrigger(prev => prev + 1);
-                }} className="bg-zinc-800 text-white p-3 rounded-xl shadow-lg">
-                    <Locate size={20} />
+                }} className={`p-2.5 rounded-xl shadow-lg transition-colors ${theme === 'light' ? 'bg-zinc-100 text-zinc-900' : 'bg-zinc-800 text-white'}`} title="Locate Me">
+                    <Locate size={18} />
                 </button>
             </div>
           </div>
-          <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-hide">
-             {sortedParticipants.map(p => {
+          
+          <div className="flex gap-2 overflow-x-auto pb-1 mt-4 scrollbar-hide">
+             {useMemo(() => {
+                 if (!participants.find(p => p.isLeader)) return participants;
+                 const leader = participants.find(p => p.isLeader);
+                 const others = participants.filter(p => !p.isLeader).sort((a, b) => {
+                    return getDistanceKm(leader.lat, leader.lng, a.lat, a.lng) - getDistanceKm(leader.lat, leader.lng, b.lat, b.lng);
+                 });
+                 return [leader, ...others];
+             }, [participants]).map(p => {
                 const ghost = isGhost(p.lastActive);
                 return (
-                <div key={p.id} className="flex-shrink-0 bg-zinc-950 border border-zinc-800 rounded-lg p-2 px-3 flex items-center gap-2 active:scale-95 transition-transform" onClick={() => handleMarkerClick(p)}>
+                <div key={p.id} className={`flex-shrink-0 border rounded-lg p-2 px-3 flex items-center gap-2 active:scale-95 transition-transform ${theme === 'light' ? 'bg-white border-zinc-200' : 'bg-zinc-950 border-zinc-800'}`} onClick={() => handleMarkerClick(p)}>
                    <div style={{ backgroundColor: ghost ? '#71717a' : p.color }} className="w-3 h-3 rounded-sm"></div>
-                   <span className={`text-zinc-300 text-xs ${ghost ? 'text-zinc-500' : ''}`}>{p.name} {p.isLeader && '👑'} {ghost && <span className="text-[10px] ml-1 opacity-50 bg-zinc-800 px-1 rounded">LOST</span>}</span>
+                   <span className={`text-xs ${theme === 'light' ? 'text-zinc-700' : 'text-zinc-300'} ${ghost ? 'text-zinc-500' : ''}`}>{p.name} {p.isLeader && '👑'} {ghost && <span className="text-[10px] ml-1 opacity-50 bg-zinc-500/20 px-1 rounded">LOST</span>}</span>
                 </div>
                 )
              })}
